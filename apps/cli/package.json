@@ -1,0 +1,19 @@
+{
+  "name": "lirovo",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": { "lirovo": "./bin/lirovo.js" },
+  "files": ["bin", "dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lirovo/contracts": "workspace:*",
+    "@lirovo/core": "workspace:*",
+    "@lirovo/node-runtime": "workspace:*"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "spike-harness-isolation",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@lirovo/node-runtime": "workspace:*" }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.turbo/
+coverage/
+spikes/*/scratch/
+.env
+.env.*
+!.env.example

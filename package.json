@@ -1,0 +1,30 @@
+{
+  "name": "lirovo-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Local-first structured extraction for video.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "cli": "node apps/cli/dist/bin.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "better-sqlite3"
+    ]
+  }
+}
