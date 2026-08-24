@@ -4,7 +4,7 @@ import type { Exec } from "@lirovo/contracts";
 import { createOpenAiCompatibleBackend } from "./openai-compatible.js";
 import { createClaudeBackend } from "./harness/claude.js";
 import { createCodexBackend } from "./harness/codex.js";
-import type { HarnessDeps } from "./harness/adapter.js";
+import type { HarnessDeps, HarnessTuning } from "./harness/adapter.js";
 
 export * from "./json.js";
 export * from "./schema.js";
@@ -18,6 +18,7 @@ export interface BackendRegistryDeps {
   readonly exec: Exec;
   readonly paths: LirovoPaths;
   readonly env?: NodeJS.ProcessEnv;
+  readonly tuning?: HarnessTuning;
 }
 
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:11434/v1";
@@ -34,7 +35,12 @@ const DEFAULT_LOCAL_MODEL = "qwen2.5vl:7b";
  */
 export const buildBackends = (deps: BackendRegistryDeps): readonly InferenceBackend[] => {
   const env = deps.env ?? process.env;
-  const harnessDeps: HarnessDeps = { exec: deps.exec, paths: deps.paths, ...(deps.env ? { env: deps.env } : {}) };
+  const harnessDeps: HarnessDeps = {
+    exec: deps.exec,
+    paths: deps.paths,
+    ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.tuning ? { tuning: deps.tuning } : {}),
+  };
 
   const apiKey = env["LIROVO_OPENAI_API_KEY"];
   const local = createOpenAiCompatibleBackend({
@@ -53,7 +59,7 @@ export const selectBackend = async (
   need: { readonly images: boolean },
 ): Promise<InferenceBackend | null> => {
   for (const backend of backends) {
-    if (need.images && !backend.capabilities.images) continue;
+    if (need.images && backend.capabilities.images === "none") continue;
     const probe = await backend.detect().catch(() => ({ available: false }));
     if (probe.available) return backend;
   }
@@ -63,3 +69,4 @@ export * from "./pass-a.js";
 export * from "./pass-b.js";
 export * from "./stages.js";
 export * from "./strict-schema.js";
+export * from "./vision.js";

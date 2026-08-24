@@ -17,7 +17,7 @@ export const codexSpec: HarnessSpec = {
   schemaMode: "file",
   versionArgs: ["--version"],
 
-  buildArgs: ({ schemaPath }) => [
+  buildArgs: ({ schemaPath, tuning }) => [
     "exec",
     // `-` reads the instructions from stdin, so the prompt never enters argv.
     "-",
@@ -31,6 +31,10 @@ export const codexSpec: HarnessSpec = {
     "--ignore-rules",
     "--sandbox",
     "read-only",
+    ...(tuning.model === undefined ? [] : ["-m", tuning.model]),
+    // Perception, not reasoning: the cheapest setting reads frames accurately
+    // and leaves the user's thinking budget for their own work.
+    ...(tuning.effort === undefined ? [] : ["-c", `model_reasoning_effort=${tuning.effort}`]),
     ...(schemaPath === null ? [] : ["--output-schema", schemaPath]),
   ],
 

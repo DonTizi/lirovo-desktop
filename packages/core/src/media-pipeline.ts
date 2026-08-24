@@ -58,8 +58,8 @@ export interface MediaPipelineResult {
   readonly rawFrameCount: number;
   readonly keptFrameCount: number;
   readonly droppedFrameCount: number;
-  /** Stages that failed without failing the run. */
-  readonly degraded: readonly { stage: Stage; code: string; message: string }[];
+  /** Stages that failed without failing the run. Appended to as later stages degrade. */
+  readonly degraded: { stage: Stage; code: string; message: string }[];
 }
 
 /**

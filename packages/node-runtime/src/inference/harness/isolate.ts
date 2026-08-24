@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -37,6 +37,14 @@ export interface Sandbox {
   readonly dir: string;
   /** Write a file the agent may read (a JSON Schema, for instance). */
   file(name: string, contents: string): Promise<string>;
+  /**
+   * Copy files in for the agent to read, under one subdirectory.
+   *
+   * Names are flattened to their basename so a caller cannot write outside the
+   * sandbox with a crafted name, and copied rather than symlinked so the agent
+   * never holds a handle pointing back into the user's library.
+   */
+  stage(subdir: string, files: readonly { name: string; path: string }[]): Promise<string>;
   dispose(): Promise<void>;
 }
 
@@ -56,6 +64,13 @@ export const createSandbox = async (): Promise<Sandbox> => {
       await writeFile(target, contents, "utf8");
       return target;
     },
+    async stage(subdir, files) {
+      const target = path.join(dir, path.basename(subdir));
+      await mkdir(target, { recursive: true });
+      await Promise.all(files.map((f) => copyFile(f.path, path.join(target, path.basename(f.name)))));
+      return target;
+    },
+
     async dispose() {
       await rm(dir, { recursive: true, force: true });
     },

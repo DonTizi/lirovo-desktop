@@ -14,10 +14,11 @@ import type { LirovoPaths } from "@lirovo/core";
 
 /** Capabilities every agent-CLI adapter shares, whatever the vendor. */
 export const HARNESS_CAPABILITIES: Omit<BackendCapabilities, "nativeJsonSchema"> = {
-  // Frames would have to be written to disk and read back through the agent's
-  // file tool: slow, non-deterministic, and it re-opens the filesystem we just
-  // closed. A one-hour video needs roughly 70 vision calls; this path is not it.
-  images: false,
+  // Measured, not assumed: an agent CLI reads image files perfectly well, and
+  // one session covering twenty frames costs 1,962 tokens per frame against
+  // 3,430 for a session covering six. The session's fixed cost is the thing
+  // worth amortising. See ASR/VISION notes in spikes/.
+  images: "files",
   // A full agent session per call. Two text calls per run is fine.
   spawnsProcessPerCall: true,
 };
@@ -42,15 +43,33 @@ export interface HarnessSpec {
   /** Args that print a version and exit 0. */
   readonly versionArgs: readonly string[];
   /** Build the invocation for this call. */
-  buildArgs(ctx: { schemaPath: string | null; schemaInline: string | null }): readonly string[];
+  buildArgs(ctx: {
+    schemaPath: string | null;
+    schemaInline: string | null;
+    tuning: HarnessTuning;
+  }): readonly string[];
   /** Pull the final assistant message out of whatever the CLI printed. */
   parseOutput(stdout: string): string;
+}
+
+/**
+ * How hard the agent should think, and with which model.
+ *
+ * Frame description is a perception task, not a reasoning one: the measured
+ * runs above used the cheapest reasoning setting and still produced accurate
+ * OCR down to Japanese station names. Spending reasoning budget here buys
+ * nothing and is charged against the same quota the user codes with.
+ */
+export interface HarnessTuning {
+  readonly model?: string;
+  readonly effort?: "low" | "medium" | "high";
 }
 
 export interface HarnessDeps {
   readonly exec: Exec;
   readonly paths: LirovoPaths;
   readonly env?: NodeJS.ProcessEnv;
+  readonly tuning?: HarnessTuning;
 }
 
 const QUOTA_HINTS = ["rate limit", "quota", "usage limit", "too many requests", "429"];
@@ -93,7 +112,7 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
       if (req.images !== undefined && req.images.length > 0) {
         throw new LirovoError(
           "HARNESS_UNSUPPORTED_CAPABILITY",
-          `${spec.id} cannot analyse frames — configure a local or BYOK vision backend`,
+          `${spec.id} takes images as files, not inline bytes — pass them as \`files\``,
         );
       }
       const resolved = await resolveBinary(spec.bin, deps.paths, env);
@@ -113,6 +132,13 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
         const schemaPath =
           schemaInline !== null && mode === "file" ? await sandbox.file("schema.json", schemaInline) : null;
 
+        // Frames go in as files the agent reads itself. One session covering
+        // many of them is what makes this affordable; sending them one batch
+        // per process would spend the session's fixed cost over and over.
+        if (req.files !== undefined && req.files.length > 0) {
+          await sandbox.stage("frames", req.files);
+        }
+
         let prompt = renderConversation(req.messages);
         if (schemaInline !== null && mode === "prompt") {
           // No native constraint: the schema travels in the prompt and the
@@ -122,7 +148,11 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
 
         const { stdout, stderr } = await deps.exec(
           resolved.path,
-          spec.buildArgs({ schemaPath, schemaInline: mode === "inline" ? schemaInline : null }),
+          spec.buildArgs({
+            schemaPath,
+            schemaInline: mode === "inline" ? schemaInline : null,
+            tuning: deps.tuning ?? {},
+          }),
           {
             cwd: sandbox.dir,
             env: minimalEnv(env),

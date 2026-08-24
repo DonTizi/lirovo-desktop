@@ -60,6 +60,19 @@ export interface ImageRef {
 }
 
 /**
+ * A file staged into the backend's working directory for it to read.
+ *
+ * This is how an agent CLI does vision. It has no way to accept image bytes on
+ * stdin, but it reads files, and a measured session handles dozens of frames
+ * at a fraction of the per-call cost of sending them one batch at a time.
+ */
+export interface FileRef {
+  /** Name inside the backend's sandbox. Never a path the caller controls. */
+  readonly name: string;
+  readonly path: string;
+}
+
+/**
  * One inference call.
  *
  * `messages` rather than `system` + `prompt` because the repair turn is a real
@@ -70,6 +83,8 @@ export interface CompletionRequest {
   readonly messages: readonly Message[];
   readonly schema?: Readonly<Record<string, unknown>>;
   readonly images?: readonly ImageRef[];
+  /** Only backends whose `images` capability is "files" can use these. */
+  readonly files?: readonly FileRef[];
   readonly maxTokens?: number;
   readonly temperature?: number;
   /** Mandatory: every call must be cancellable from a stop button or Ctrl-C. */
@@ -94,8 +109,15 @@ export interface CompletionResult {
 export interface BackendCapabilities {
   /** Constrains output to a JSON Schema without a repair round-trip. */
   readonly nativeJsonSchema: boolean;
-  /** Whether images can be sent at all. Harness adapters report false. */
-  readonly images: boolean;
+  /**
+   * How this backend takes images.
+   *
+   * "inline" — bytes in the request, one call per batch.
+   * "files"  — staged on disk and read by the agent inside one session, which
+   *            amortises the session's fixed cost across every frame in it.
+   * "none"   — cannot see images at all.
+   */
+  readonly images: "inline" | "files" | "none";
   /** Per-call process spawn. True means "cheap for 2 calls, ruinous for 70". */
   readonly spawnsProcessPerCall: boolean;
 }

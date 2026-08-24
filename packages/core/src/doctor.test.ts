@@ -37,7 +37,7 @@ const backend = (
   caps: Partial<InferenceBackend["capabilities"]> = {},
 ): InferenceBackend => ({
   id,
-  capabilities: { nativeJsonSchema: false, images: true, spawnsProcessPerCall: false, ...caps },
+  capabilities: { nativeJsonSchema: false, images: "inline", spawnsProcessPerCall: false, ...caps },
   detect: async () => ({ available, version: available ? "1.0" : null }),
   complete: async () => {
     throw new Error("not used in doctor");
@@ -97,7 +97,7 @@ describe("runDoctor", () => {
       paths,
       dependencies: [],
       probeBinary: async (s) => found(s),
-      backends: [backend("codex", true, { images: false, spawnsProcessPerCall: true })],
+      backends: [backend("codex", true, { images: "none", spawnsProcessPerCall: true })],
       probeAsr: bothKinds,
     });
     expect(report.ok).toBe(true);

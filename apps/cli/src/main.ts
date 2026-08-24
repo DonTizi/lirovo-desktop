@@ -15,6 +15,9 @@ usage
 extract flags
   --schema <file.json>          JSON Schema the extraction must conform to
   --backend <id>                force an inference backend (default: first available)
+  --model <name>                model the backend should use
+  --effort <low|medium|high>    reasoning effort (default low — frame description
+                                is perception, not reasoning)
   --no-inference                skip the model stages entirely
   --frame-cap <n>               refuse a source yielding more scene changes
                                 (default ${DEFAULT_FRAME_CAP})
@@ -71,6 +74,13 @@ export const main = async (argv: readonly string[]): Promise<void> => {
           break;
         }
         const backendFlag = args.flags["backend"];
+        const modelFlag = args.flags["model"];
+        const effortFlag = args.flags["effort"];
+        if (effortFlag !== undefined && !["low", "medium", "high"].includes(String(effortFlag))) {
+          errOut(`--effort must be low, medium or high, got "${String(effortFlag)}"`);
+          code = EXIT.usage;
+          break;
+        }
         const rawCap = args.flags["frame-cap"];
         const frameCap = typeof rawCap === "string" ? Number(rawCap) : DEFAULT_FRAME_CAP;
         if (!Number.isFinite(frameCap) || frameCap <= 0) {
@@ -79,7 +89,15 @@ export const main = async (argv: readonly string[]): Promise<void> => {
           break;
         }
         code = await extractCommand(
-          { source, json, frameCap, schemaPath, backendId: typeof backendFlag === "string" ? backendFlag : null },
+          {
+            source,
+            json,
+            frameCap,
+            schemaPath,
+            backendId: typeof backendFlag === "string" ? backendFlag : null,
+            model: typeof modelFlag === "string" ? modelFlag : null,
+            effort: typeof effortFlag === "string" ? (effortFlag as "low" | "medium" | "high") : null,
+          },
           out,
           errOut,
         );

@@ -8,7 +8,7 @@ export interface BackendStatus {
   readonly version: string | null;
   readonly reason: string | null;
   readonly nativeJsonSchema: boolean;
-  readonly images: boolean;
+  readonly images: "inline" | "files" | "none";
   readonly spawnsProcessPerCall: boolean;
 }
 
@@ -90,10 +90,10 @@ export const runDoctor = async (deps: DoctorDeps): Promise<DoctorReport> => {
     );
   }
 
-  // A backend that spawns a process per call is fine for the two text calls and
-  // ruinous for the dozens of vision calls, so it can never be the only option
-  // for images. Saying so here beats discovering it 68 spawns into a run.
-  const imageCapable = usable.filter((b) => b.images && !b.spawnsProcessPerCall);
+  // A backend that cannot see images at all means the run is audio-only, which
+  // is a real mode but a much thinner result. Saying so here beats discovering
+  // it after the frames have already been extracted.
+  const imageCapable = usable.filter((b) => b.images !== "none");
   if (usable.length > 0 && imageCapable.length === 0) {
     warnings.push(
       "no backend can analyse frames — extraction will run audio-only (visual evidence disabled)",

@@ -20,7 +20,8 @@ export interface OpenAiCompatibleConfig {
 const CAPABILITIES: BackendCapabilities = {
   // Honoured by servers that implement it; the repair loop covers the rest.
   nativeJsonSchema: true,
-  images: true,
+  // Bytes in the request: no session to amortise, but no filesystem either.
+  images: "inline",
   // A persistent server, so dozens of vision calls cost dozens of requests
   // rather than dozens of process launches. This is why it is the default.
   spawnsProcessPerCall: false,

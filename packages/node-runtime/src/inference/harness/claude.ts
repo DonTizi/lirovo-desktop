@@ -19,7 +19,7 @@ export const claudeSpec: HarnessSpec = {
   schemaMode: "inline",
   versionArgs: ["--version"],
 
-  buildArgs: ({ schemaInline }) => [
+  buildArgs: ({ schemaInline, tuning }) => [
     "--print",
     "--output-format",
     "json",
@@ -28,6 +28,7 @@ export const claudeSpec: HarnessSpec = {
     // ...and that list is empty.
     "--mcp-config",
     '{"mcpServers":{}}',
+    ...(tuning.model === undefined ? [] : ["--model", tuning.model]),
     ...(schemaInline === null ? [] : ["--json-schema", schemaInline]),
   ],
 

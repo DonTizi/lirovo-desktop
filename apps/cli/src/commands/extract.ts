@@ -29,6 +29,8 @@ export interface ExtractOptions {
   readonly frameCap: number;
   readonly schemaPath: string | null;
   readonly backendId: string | null;
+  readonly model: string | null;
+  readonly effort: "low" | "medium" | "high" | null;
 }
 
 const humanMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
@@ -148,7 +150,14 @@ export const extractCommand = async (
       // Resolve the backend BEFORE any download: discovering there is nothing
       // to reason with after a twenty-minute ingest is the worst moment to
       // find out.
-      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths }), opts.backendId);
+      const tuning = {
+        ...(opts.model !== null ? { model: opts.model } : {}),
+        // Describing a frame is perception, not reasoning. The default is the
+        // cheapest setting because the measured runs read frames accurately at
+        // it, and anything more is billed against the quota the user codes with.
+        effort: opts.effort ?? ("low" as const),
+      };
+      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), opts.backendId);
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
 
@@ -159,7 +168,17 @@ export const extractCommand = async (
       ? await runMediaPipeline(input, deps)
       : await runExtraction(
           { ...input, dataSchema: dataSchema as Record<string, unknown> },
-          { ...deps, inference: buildInferenceStages({ backend: backend as InferenceBackend }) },
+          {
+            ...deps,
+            inference: buildInferenceStages({
+              backend: backend as InferenceBackend,
+              store,
+              onVisionBatch: (done, total) =>
+                onEvent({ type: "stage:progress", runId, stage: "vision", done, total, note: "sessions" }),
+              onWindow: (done, total) =>
+                onEvent({ type: "stage:progress", runId, stage: "graph", done, total, note: "windows" }),
+            }),
+          },
         );
 
     // Record the run only once it has something to record. A row created up
@@ -211,6 +230,7 @@ export const extractCommand = async (
             frames: { detected: result.rawFrameCount, kept: result.keptFrameCount, dropped: result.droppedFrameCount },
             ...(isExtraction(result)
               ? {
+                  vision: { frames_described: result.frameAnalyses, sessions: result.visionSessions },
                   graph: { nodes: result.kg.nodes.length, edges: result.kg.edges.length, windows: result.graphWindows },
                   values: persisted,
                   data: result.data,
@@ -225,6 +245,9 @@ export const extractCommand = async (
     } else {
       out(renderResult(runId, result));
       if (isExtraction(result)) {
+        if (result.visionSessions > 0) {
+          out(`  vision     ${result.frameAnalyses} frames described in ${result.visionSessions} session${result.visionSessions === 1 ? "" : "s"}`);
+        }
         out(`  graph      ${result.kg.nodes.length} nodes, ${result.kg.edges.length} edges (${result.graphWindows} window${result.graphWindows === 1 ? "" : "s"})`);
         out(`  values     ${persisted.values} extracted, ${persisted.grounded} grounded in ${persisted.evidenceRows} evidence spans`);
       }
