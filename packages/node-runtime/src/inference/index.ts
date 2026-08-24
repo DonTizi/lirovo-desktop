@@ -7,6 +7,7 @@ import { createCodexBackend } from "./harness/codex.js";
 import type { HarnessDeps } from "./harness/adapter.js";
 
 export * from "./json.js";
+export * from "./schema.js";
 export * from "./openai-compatible.js";
 export * from "./harness/adapter.js";
 export * from "./harness/isolate.js";
@@ -58,3 +59,7 @@ export const selectBackend = async (
   }
   return null;
 };
+export * from "./pass-a.js";
+export * from "./pass-b.js";
+export * from "./stages.js";
+export * from "./strict-schema.js";

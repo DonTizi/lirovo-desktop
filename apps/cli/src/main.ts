@@ -8,11 +8,14 @@ const HELP = `lirovo — local-first structured extraction for video
 
 usage
   lirovo doctor [--json]                    check dependencies, backends and paths
-  lirovo extract <url|file> --no-inference  ingest, normalize, detect and dedup
-                                            frames, transcribe. No model calls.
+  lirovo extract <url|file> --schema <f>     transcribe, build the graph and fill
+                                            the schema, with evidence per value
+  lirovo extract <url|file> --no-inference   the media and transcription half only
 
 extract flags
-  --no-inference                required today: the model stages are not wired yet
+  --schema <file.json>          JSON Schema the extraction must conform to
+  --backend <id>                force an inference backend (default: first available)
+  --no-inference                skip the model stages entirely
   --frame-cap <n>               refuse a source yielding more scene changes
                                 (default ${DEFAULT_FRAME_CAP})
 
@@ -58,14 +61,16 @@ export const main = async (argv: readonly string[]): Promise<void> => {
           code = EXIT.usage;
           break;
         }
-        // Refusing rather than silently doing half the job: a user who expects
-        // typed values back should not get a transcript and assume that is all
-        // there is. The flag becomes optional once the model stages land.
-        if (!boolFlag(args, "no-inference")) {
-          errOut("the model stages are not wired yet — re-run with --no-inference to do the media and transcription half");
-          code = EXIT.unavailable;
+        const schemaFlag = args.flags["schema"];
+        const schemaPath = typeof schemaFlag === "string" ? schemaFlag : null;
+        // Without a schema there is nothing for the model to fill in, so the
+        // media half runs on its own rather than the command refusing.
+        if (schemaPath === null && !boolFlag(args, "no-inference")) {
+          errOut("extract needs --schema <file.json>, or --no-inference to run the media and transcription half alone");
+          code = EXIT.usage;
           break;
         }
+        const backendFlag = args.flags["backend"];
         const rawCap = args.flags["frame-cap"];
         const frameCap = typeof rawCap === "string" ? Number(rawCap) : DEFAULT_FRAME_CAP;
         if (!Number.isFinite(frameCap) || frameCap <= 0) {
@@ -73,7 +78,11 @@ export const main = async (argv: readonly string[]): Promise<void> => {
           code = EXIT.usage;
           break;
         }
-        code = await extractCommand({ source, json, frameCap, noInference: true }, out, errOut);
+        code = await extractCommand(
+          { source, json, frameCap, schemaPath, backendId: typeof backendFlag === "string" ? backendFlag : null },
+          out,
+          errOut,
+        );
         break;
       }
       default:

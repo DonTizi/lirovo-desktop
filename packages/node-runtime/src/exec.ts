@@ -47,6 +47,10 @@ export const realExec: Exec = (bin, args, opts: ExecOptions = {}): Promise<ExecR
       fn();
     };
 
+    child.on("close", () => {
+      if (killTimer !== undefined) clearTimeout(killTimer);
+    });
+
     const timer = setTimeout(() => {
       killGroup("SIGKILL");
       finish(() =>
@@ -54,8 +58,16 @@ export const realExec: Exec = (bin, args, opts: ExecOptions = {}): Promise<ExecR
       );
     }, timeoutMs);
 
+    // SIGTERM first so the child can close its output file, then SIGKILL if it
+    // is still alive. Measured: ffmpeg mid-transcode survives a lone SIGTERM
+    // and keeps burning CPU after the run it belongs to is gone.
+    const GRACE_MS = 2000;
+    let killTimer: NodeJS.Timeout | undefined;
+
     const onAbort = (): void => {
       killGroup("SIGTERM");
+      killTimer = setTimeout(() => killGroup("SIGKILL"), GRACE_MS);
+      killTimer.unref();
       finish(() => reject(new LirovoError("CANCELLED", `${bin} cancelled`, { detail: { bin } })));
     };
     opts.signal?.addEventListener("abort", onAbort);

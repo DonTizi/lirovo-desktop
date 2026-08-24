@@ -9,6 +9,7 @@ import { LirovoError } from "@lirovo/contracts";
 import { resolveBinary } from "../../binaries.js";
 import { extractJson, looksTruncated } from "../json.js";
 import { createSandbox, minimalEnv, renderConversation, type Sandbox } from "./isolate.js";
+import { isStrictSchema } from "../strict-schema.js";
 import type { LirovoPaths } from "@lirovo/core";
 
 /** Capabilities every agent-CLI adapter shares, whatever the vendor. */
@@ -102,14 +103,18 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
       let sandbox: Sandbox | null = null;
       try {
         sandbox = await createSandbox();
+        // A CLI that constrains output natively still only accepts the strict
+        // subset. An open schema has to travel in the prompt instead, or the
+        // request is rejected with a 400 before the model runs at all.
+        const nativeOk = spec.schemaMode !== "prompt" && (req.schema === undefined || isStrictSchema(req.schema));
+        const mode: SchemaMode = nativeOk ? spec.schemaMode : "prompt";
+
         const schemaInline = req.schema === undefined ? null : JSON.stringify(req.schema);
         const schemaPath =
-          schemaInline !== null && spec.schemaMode === "file"
-            ? await sandbox.file("schema.json", schemaInline)
-            : null;
+          schemaInline !== null && mode === "file" ? await sandbox.file("schema.json", schemaInline) : null;
 
         let prompt = renderConversation(req.messages);
-        if (schemaInline !== null && spec.schemaMode === "prompt") {
+        if (schemaInline !== null && mode === "prompt") {
           // No native constraint: the schema travels in the prompt and the
           // caller's repair loop catches what the model gets wrong.
           prompt += `\n\nReturn ONLY one JSON object conforming to this JSON Schema:\n${schemaInline}`;
@@ -117,7 +122,7 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
 
         const { stdout, stderr } = await deps.exec(
           resolved.path,
-          spec.buildArgs({ schemaPath, schemaInline }),
+          spec.buildArgs({ schemaPath, schemaInline: mode === "inline" ? schemaInline : null }),
           {
             cwd: sandbox.dir,
             env: minimalEnv(env),
