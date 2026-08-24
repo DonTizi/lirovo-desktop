@@ -1,6 +1,12 @@
-import type { AsrStrategy } from "@lirovo/contracts";
 import { DEPENDENCIES, runDoctor, type DoctorReport } from "@lirovo/core";
-import { buildBackends, makeBinaryProbe, realExec, resolvePaths } from "@lirovo/node-runtime";
+import {
+  buildAsrStrategies,
+  buildBackends,
+  makeAsrProbe,
+  makeBinaryProbe,
+  realExec,
+  resolvePaths,
+} from "@lirovo/node-runtime";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 
 const TICK = "ok  ";
@@ -40,8 +46,12 @@ export const renderReport = (report: DoctorReport): string => {
   lines.push("");
 
   lines.push("transcription");
-  if (report.asrStrategies.length === 0) lines.push("  none");
-  else for (const name of report.asrStrategies) lines.push(`  ${TICK}  ${name}`);
+  for (const probe of report.asr) {
+    const kinds = [probe.forUrl ? "urls" : null, probe.forFile ? "files" : null].filter((k) => k !== null);
+    const mark = kinds.length > 0 ? TICK : WARN;
+    const detail = kinds.length > 0 ? kinds.join(" + ") : (probe.hint ?? "unavailable");
+    lines.push(`  ${mark}  ${pad(probe.name, 12)} ${detail}`);
+  }
 
   if (report.warnings.length > 0) {
     lines.push("");
@@ -61,7 +71,6 @@ export const renderReport = (report: DoctorReport): string => {
 
 export interface DoctorOptions {
   readonly json: boolean;
-  readonly asrStrategies?: readonly AsrStrategy[];
 }
 
 export const doctorCommand = async (
@@ -74,7 +83,7 @@ export const doctorCommand = async (
     dependencies: DEPENDENCIES,
     probeBinary: makeBinaryProbe(paths, realExec),
     backends: buildBackends({ exec: realExec, paths }),
-    asrStrategies: opts.asrStrategies ?? [],
+    probeAsr: makeAsrProbe(buildAsrStrategies({ exec: realExec, paths }), paths),
   });
 
   stdout(opts.json ? JSON.stringify(report, null, 2) : renderReport(report));

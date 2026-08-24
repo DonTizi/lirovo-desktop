@@ -1,4 +1,4 @@
-import type { AsrStrategy, InferenceBackend } from "@lirovo/contracts";
+import type { InferenceBackend } from "@lirovo/contracts";
 import type { BinaryStatus, DependencySpec } from "./dependencies.js";
 import type { LirovoPaths } from "./paths.js";
 
@@ -12,11 +12,26 @@ export interface BackendStatus {
   readonly spawnsProcessPerCall: boolean;
 }
 
+/**
+ * Availability of one transcription link, per source kind.
+ *
+ * Split by kind because the answer genuinely differs: subtitles exist for a
+ * URL and never for a local file, so a single boolean would either overstate
+ * or understate what the machine can do.
+ */
+export interface AsrProbe {
+  readonly name: string;
+  readonly forUrl: boolean;
+  readonly forFile: boolean;
+  /** What the user would have to do to turn this link on. */
+  readonly hint: string | null;
+}
+
 export interface DoctorReport {
   readonly paths: LirovoPaths;
   readonly dependencies: readonly BinaryStatus[];
   readonly backends: readonly BackendStatus[];
-  readonly asrStrategies: readonly string[];
+  readonly asr: readonly AsrProbe[];
   /** Blocking problems. Empty means the pipeline can run. */
   readonly problems: readonly string[];
   /** Non-blocking, but the user is losing something. */
@@ -29,7 +44,7 @@ export interface DoctorDeps {
   readonly dependencies: readonly DependencySpec[];
   readonly probeBinary: (spec: DependencySpec) => Promise<BinaryStatus>;
   readonly backends: readonly InferenceBackend[];
-  readonly asrStrategies: readonly AsrStrategy[];
+  readonly probeAsr: () => Promise<readonly AsrProbe[]>;
 }
 
 const describeBackend = async (backend: InferenceBackend): Promise<BackendStatus> => {
@@ -56,6 +71,7 @@ const describeBackend = async (backend: InferenceBackend): Promise<BackendStatus
 export const runDoctor = async (deps: DoctorDeps): Promise<DoctorReport> => {
   const dependencies = await Promise.all(deps.dependencies.map((spec) => deps.probeBinary(spec)));
   const backends = await Promise.all(deps.backends.map(describeBackend));
+  const asr = await deps.probeAsr();
 
   const problems: string[] = [];
   const warnings: string[] = [];
@@ -84,15 +100,28 @@ export const runDoctor = async (deps: DoctorDeps): Promise<DoctorReport> => {
     );
   }
 
-  if (deps.asrStrategies.length === 0) {
-    problems.push("no transcription strategy available");
+  const forUrl = asr.filter((a) => a.forUrl);
+  const forFile = asr.filter((a) => a.forFile);
+  if (forUrl.length === 0 && forFile.length === 0) {
+    problems.push("no transcription strategy available — nothing can be transcribed");
+    for (const probe of asr) if (probe.hint !== null) problems.push(`  ${probe.name}: ${probe.hint}`);
+  } else {
+    // Covering one source kind and not the other is a real, partial state: say
+    // which half works rather than reporting a blanket ok.
+    if (forUrl.length === 0) warnings.push("no transcription available for URLs");
+    if (forFile.length === 0) {
+      warnings.push("no transcription available for local files");
+      for (const probe of asr) {
+        if (!probe.forFile && probe.hint !== null) warnings.push(`  ${probe.name}: ${probe.hint}`);
+      }
+    }
   }
 
   return {
     paths: deps.paths,
     dependencies,
     backends,
-    asrStrategies: deps.asrStrategies.map((s) => s.name),
+    asr,
     problems,
     warnings,
     ok: problems.length === 0,

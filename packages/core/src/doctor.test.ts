@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AsrStrategy, InferenceBackend } from "@lirovo/contracts";
+import type { InferenceBackend } from "@lirovo/contracts";
 import { runDoctor } from "./doctor.js";
 import type { BinaryStatus, DependencySpec } from "./dependencies.js";
 import type { LirovoPaths } from "./paths.js";
@@ -44,13 +44,12 @@ const backend = (
   },
 });
 
-const asr: AsrStrategy = {
-  name: "captions",
-  isAvailable: async () => true,
-  transcribe: async () => {
-    throw new Error("not used in doctor");
-  },
-};
+const bothKinds = async () => [{ name: "whisper-cpp", forUrl: true, forFile: true, hint: null }];
+const noKinds = async () => [
+  { name: "captions", forUrl: false, forFile: false, hint: "install yt-dlp" },
+  { name: "whisper-cpp", forUrl: false, forFile: false, hint: "no model" },
+];
+const urlOnly = async () => [{ name: "captions", forUrl: true, forFile: false, hint: "no model" }];
 
 describe("runDoctor", () => {
   it("is ok when a required binary and one backend are present", async () => {
@@ -60,7 +59,7 @@ describe("runDoctor", () => {
       dependencies: specs,
       probeBinary: async (s) => found(s),
       backends: [backend("openai-compatible", true)],
-      asrStrategies: [asr],
+      probeAsr: bothKinds,
     });
     expect(report.ok).toBe(true);
     expect(report.problems).toEqual([]);
@@ -73,7 +72,7 @@ describe("runDoctor", () => {
       dependencies: specs,
       probeBinary: async (s) => ({ ...missing(s), found: false }),
       backends: [backend("openai-compatible", true)],
-      asrStrategies: [asr],
+      probeAsr: bothKinds,
     });
     expect(report.ok).toBe(false);
     expect(report.problems.some((p) => p.startsWith("ffmpeg"))).toBe(true);
@@ -86,7 +85,7 @@ describe("runDoctor", () => {
       dependencies: [],
       probeBinary: async (s) => found(s),
       backends: [backend("openai-compatible", false)],
-      asrStrategies: [asr],
+      probeAsr: bothKinds,
     });
     expect(report.ok).toBe(false);
     expect(report.problems.join(" ")).toContain("no inference backend");
@@ -99,7 +98,7 @@ describe("runDoctor", () => {
       dependencies: [],
       probeBinary: async (s) => found(s),
       backends: [backend("codex", true, { images: false, spawnsProcessPerCall: true })],
-      asrStrategies: [asr],
+      probeAsr: bothKinds,
     });
     expect(report.ok).toBe(true);
     expect(report.warnings.join(" ")).toContain("audio-only");
@@ -117,9 +116,36 @@ describe("runDoctor", () => {
       dependencies: [],
       probeBinary: async (s) => found(s),
       backends: [exploding, backend("openai-compatible", true)],
-      asrStrategies: [asr],
+      probeAsr: bothKinds,
     });
     expect(report.ok).toBe(true);
     expect(report.backends.find((b) => b.id === "broken")?.reason).toContain("ENOENT");
+  });
+});
+
+describe("transcription readiness", () => {
+  it("blocks when nothing can transcribe, and repeats each hint", async () => {
+    const report = await runDoctor({
+      paths,
+      dependencies: [],
+      probeBinary: async (s) => found(s),
+      backends: [backend("local", true)],
+      probeAsr: noKinds,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.problems.join(" ")).toContain("install yt-dlp");
+    expect(report.problems.join(" ")).toContain("no model");
+  });
+
+  it("warns, not blocks, when only URLs are covered", async () => {
+    const report = await runDoctor({
+      paths,
+      dependencies: [],
+      probeBinary: async (s) => found(s),
+      backends: [backend("local", true)],
+      probeAsr: urlOnly,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.warnings.join(" ")).toContain("local files");
   });
 });
