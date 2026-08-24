@@ -18,6 +18,10 @@ extract flags
   --model <name>                model the backend should use
   --effort <low|medium|high>    reasoning effort (default low — frame description
                                 is perception, not reasoning)
+  --time-budget <minutes>       wall-clock ceiling for describing frames
+                                (default 15). Over budget, frames are chosen to
+                                cover the whole video rather than truncated.
+  --concurrency <n>             vision sessions in flight (default 4)
   --no-inference                skip the model stages entirely
   --frame-cap <n>               refuse a source yielding more scene changes
                                 (default ${DEFAULT_FRAME_CAP})
@@ -75,6 +79,14 @@ export const main = async (argv: readonly string[]): Promise<void> => {
         }
         const backendFlag = args.flags["backend"];
         const modelFlag = args.flags["model"];
+        const budgetFlag = args.flags["time-budget"];
+        const concFlag = args.flags["concurrency"];
+        const visionBudgetS = typeof budgetFlag === "string" ? Number(budgetFlag) * 60 : 15 * 60;
+        if (!Number.isFinite(visionBudgetS) || visionBudgetS <= 0) {
+          errOut(`--time-budget must be a positive number of minutes, got "${String(budgetFlag)}"`);
+          code = EXIT.usage;
+          break;
+        }
         const effortFlag = args.flags["effort"];
         if (effortFlag !== undefined && !["low", "medium", "high"].includes(String(effortFlag))) {
           errOut(`--effort must be low, medium or high, got "${String(effortFlag)}"`);
@@ -97,6 +109,8 @@ export const main = async (argv: readonly string[]): Promise<void> => {
             backendId: typeof backendFlag === "string" ? backendFlag : null,
             model: typeof modelFlag === "string" ? modelFlag : null,
             effort: typeof effortFlag === "string" ? (effortFlag as "low" | "medium" | "high") : null,
+            visionBudgetS,
+            concurrency: typeof concFlag === "string" ? Number(concFlag) : null,
           },
           out,
           errOut,

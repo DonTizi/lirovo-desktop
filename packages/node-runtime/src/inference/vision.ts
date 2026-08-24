@@ -9,6 +9,7 @@ import type {
 } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, LirovoError } from "@lirovo/contracts";
 import { readFile } from "node:fs/promises";
+import { selectFrames } from "@lirovo/core";
 import { pMap } from "../p-map.js";
 
 /**
@@ -36,11 +37,16 @@ export const DEFAULT_VISION_BATCH = 20;
 /**
  * Sessions in flight.
  *
- * Two, not ten. Every session bills against the same subscription window, and
- * a user whose weekly quota is spent by one video cannot use their agent for
- * the work they actually bought it for.
+ * Measured: one session of twenty frames takes 56.6s alone, and four launched
+ * together finish in 64s. Parallelism here is close to free — the work is on
+ * the provider's side, not this machine's — so four waves through 80 frames in
+ * about the time one session takes.
+ *
+ * Four rather than more because concurrency does not change what a run COSTS,
+ * only how fast it spends it, and a per-minute rate limit is the next wall.
+ * Raise it with --concurrency when the clock matters more than the ceiling.
  */
-export const DEFAULT_VISION_CONCURRENCY = 2;
+export const DEFAULT_VISION_CONCURRENCY = 4;
 
 /**
  * The model each backend should use for frames, unless the caller says otherwise.
@@ -122,6 +128,8 @@ export interface VisionInput {
   readonly runId: string;
   readonly batchSize?: number;
   readonly concurrency?: number;
+  /** Describe at most this many frames, chosen to cover the whole video. */
+  readonly frameBudget?: number;
   readonly signal: AbortSignal;
 }
 
@@ -135,6 +143,8 @@ export interface VisionResult {
   readonly analyses: readonly FrameAnalysis[];
   readonly sessions: number;
   readonly framesRequested: number;
+  /** Frames the budget left out. Never silent: the caller reports this. */
+  readonly framesSkippedForBudget: number;
   /** Frames the model did not come back with. Reported, never hidden. */
   readonly framesMissing: number;
   readonly linesSkipped: number;
@@ -167,10 +177,17 @@ export const runVision = async (input: VisionInput, deps: VisionDeps): Promise<V
   }
   const manifest = JSON.parse(manifestText) as FramesManifest;
   const kept = (manifest.dedup ?? []).filter((d) => d.kept);
-  if (kept.length === 0) return { analyses: [], sessions: 0, framesRequested: 0, framesMissing: 0, linesSkipped: 0 };
+  if (kept.length === 0) {
+    return { analyses: [], sessions: 0, framesRequested: 0, framesSkippedForBudget: 0, framesMissing: 0, linesSkipped: 0 };
+  }
 
-  const tMsByIdx = new Map(kept.map((d) => [d.idx, d.t_ms]));
-  const batches = chunk(kept, input.batchSize ?? DEFAULT_VISION_BATCH);
+  // Over budget, the selection is stratified by time rather than truncated:
+  // describing the first N frames of a two-hour recording and stopping is how
+  // you produce a result that is confidently wrong about the second half.
+  const selected = input.frameBudget === undefined ? kept : selectFrames(kept, manifest.dedup ?? [], input.frameBudget);
+
+  const tMsByIdx = new Map(selected.map((d) => [d.idx, d.t_ms]));
+  const batches = chunk(selected, input.batchSize ?? DEFAULT_VISION_BATCH);
   const staged = deps.backend.capabilities.images === "files";
   let done = 0;
 
@@ -225,8 +242,9 @@ export const runVision = async (input: VisionInput, deps: VisionDeps): Promise<V
   return {
     analyses,
     sessions: batches.length,
-    framesRequested: kept.length,
-    framesMissing: kept.filter((d) => !seen.has(d.idx)).length,
+    framesRequested: selected.length,
+    framesSkippedForBudget: kept.length - selected.length,
+    framesMissing: selected.filter((d) => !seen.has(d.idx)).length,
     linesSkipped: results.reduce((n, r) => n + r.skipped, 0),
   };
 };

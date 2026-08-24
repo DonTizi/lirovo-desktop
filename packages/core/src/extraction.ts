@@ -22,6 +22,7 @@ export interface InferenceStages {
     analyses: readonly FrameAnalysis[];
     sessions: number;
     framesMissing: number;
+    framesSkippedForBudget: number;
   }>;
 
   buildGraph(input: {
@@ -52,6 +53,7 @@ export interface ExtractionResult extends MediaPipelineResult {
   readonly kg: Kg;
   readonly frameAnalyses: number;
   readonly visionSessions: number;
+  readonly framesSkippedForBudget: number;
   readonly data: unknown;
   readonly evidenceByField: Map<string, EvidenceDraft[]>;
   readonly graphWindows: number;
@@ -97,6 +99,7 @@ export const runExtraction = async (
   // throw away a transcript the user already paid for.
   let analyses: readonly FrameAnalysis[] = [];
   let visionSessions = 0;
+  let framesSkippedForBudget = 0;
   if (deps.inference.describeFrames !== undefined && media.keptFrameCount > 0) {
     try {
       const described = await stage("vision", () =>
@@ -107,6 +110,18 @@ export const runExtraction = async (
       );
       analyses = described.analyses;
       visionSessions = described.sessions;
+      framesSkippedForBudget = described.framesSkippedForBudget;
+      if (described.framesSkippedForBudget > 0) {
+        // Loud, never silent: a user who does not know frames were left out
+        // will read the result as complete.
+        emit({
+          type: "stage:degraded",
+          runId: input.runId,
+          stage: "vision",
+          code: "FRAME_BUDGET_APPLIED",
+          message: `${described.framesSkippedForBudget} frame(s) left undescribed to stay inside the time budget`,
+        });
+      }
       if (described.framesMissing > 0) {
         emit({
           type: "stage:degraded",
@@ -150,6 +165,7 @@ export const runExtraction = async (
     kg: graph.kg,
     frameAnalyses: analyses.length,
     visionSessions,
+    framesSkippedForBudget,
     data: extracted.data,
     evidenceByField: extracted.evidenceByField,
     graphWindows: graph.windows,

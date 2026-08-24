@@ -13,6 +13,8 @@ export interface InferenceStagesDeps {
   readonly visionBackend?: InferenceBackend;
   /** Build a backend bound to a specific model, for the cheap vision default. */
   readonly withModel?: (backendId: string, model: string) => InferenceBackend | null;
+  readonly frameBudget?: number;
+  readonly concurrency?: number;
 }
 
 /** Bind the two model stages to one backend. */
@@ -20,7 +22,7 @@ export const buildInferenceStages = (deps: InferenceStagesDeps): InferenceStages
   describeFrames: async (input) => {
     const chosen = deps.visionBackend ?? deps.backend;
     if (chosen.capabilities.images === "none") {
-      return { analyses: [], sessions: 0, framesMissing: 0 };
+      return { analyses: [], sessions: 0, framesMissing: 0, framesSkippedForBudget: 0 };
     }
     // Frames go to the cheap model by default; see VISION_MODEL_BY_BACKEND.
     const cheapModel = VISION_MODEL_BY_BACKEND[chosen.id];
@@ -29,14 +31,24 @@ export const buildInferenceStages = (deps: InferenceStagesDeps): InferenceStages
         ? (deps.withModel(chosen.id, cheapModel) ?? chosen)
         : chosen;
     const result = await runVision(
-      { runId: input.runId, signal: input.signal as AbortSignal },
+      {
+        runId: input.runId,
+        signal: input.signal as AbortSignal,
+        ...(deps.frameBudget !== undefined ? { frameBudget: deps.frameBudget } : {}),
+        ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {}),
+      },
       {
         backend,
         store: deps.store,
         ...(deps.onVisionBatch ? { onProgress: deps.onVisionBatch } : {}),
       },
     );
-    return { analyses: result.analyses, sessions: result.sessions, framesMissing: result.framesMissing };
+    return {
+      analyses: result.analyses,
+      sessions: result.sessions,
+      framesMissing: result.framesMissing,
+      framesSkippedForBudget: result.framesSkippedForBudget,
+    };
   },
 
   buildGraph: async (input) => {

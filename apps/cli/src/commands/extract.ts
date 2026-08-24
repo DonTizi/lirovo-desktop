@@ -4,8 +4,16 @@ import { hostname } from "node:os";
 import path from "node:path";
 import type { InferenceBackend, PipelineEvent } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, isLirovoError, makeId, LirovoError } from "@lirovo/contracts";
-import { runExtraction, runMediaPipeline, type ExtractionResult, type MediaPipelineResult } from "@lirovo/core";
 import {
+  planForBudget,
+  runExtraction,
+  runMediaPipeline,
+  type ExtractionResult,
+  type MediaPipelineResult,
+} from "@lirovo/core";
+import {
+  DEFAULT_VISION_BATCH,
+  DEFAULT_VISION_CONCURRENCY,
   buildAsrChain,
   buildBackends,
   buildInferenceStages,
@@ -31,6 +39,9 @@ export interface ExtractOptions {
   readonly backendId: string | null;
   readonly model: string | null;
   readonly effort: "low" | "medium" | "high" | null;
+  /** Wall-clock ceiling for frame description, in seconds. */
+  readonly visionBudgetS: number;
+  readonly concurrency: number | null;
 }
 
 const humanMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
@@ -162,6 +173,9 @@ export const extractCommand = async (
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
 
+    const concurrency = opts.concurrency ?? DEFAULT_VISION_CONCURRENCY;
+    const budget = planForBudget(opts.visionBudgetS, DEFAULT_VISION_BATCH, concurrency);
+
     const deps = { stages, asr, store, now: () => Date.now(), onEvent };
     const input = { runId, source: opts.source, frameCap: opts.frameCap, signal: controller.signal };
 
@@ -183,6 +197,8 @@ export const extractCommand = async (
                       ) ?? null,
                   }
                 : {}),
+              frameBudget: budget.frameBudget,
+              concurrency,
               onVisionBatch: (done, total) =>
                 onEvent({ type: "stage:progress", runId, stage: "vision", done, total, note: "sessions" }),
               onWindow: (done, total) =>
@@ -240,7 +256,11 @@ export const extractCommand = async (
             frames: { detected: result.rawFrameCount, kept: result.keptFrameCount, dropped: result.droppedFrameCount },
             ...(isExtraction(result)
               ? {
-                  vision: { frames_described: result.frameAnalyses, sessions: result.visionSessions },
+                  vision: {
+                    frames_described: result.frameAnalyses,
+                    sessions: result.visionSessions,
+                    frames_skipped_for_budget: result.framesSkippedForBudget,
+                  },
                   graph: { nodes: result.kg.nodes.length, edges: result.kg.edges.length, windows: result.graphWindows },
                   values: persisted,
                   data: result.data,
@@ -256,7 +276,13 @@ export const extractCommand = async (
       out(renderResult(runId, result));
       if (isExtraction(result)) {
         if (result.visionSessions > 0) {
-          out(`  vision     ${result.frameAnalyses} frames described in ${result.visionSessions} session${result.visionSessions === 1 ? "" : "s"}`);
+          const skipped =
+            result.framesSkippedForBudget > 0
+              ? `, ${result.framesSkippedForBudget} left out for the ${Math.round(opts.visionBudgetS / 60)}min budget — raise with --time-budget`
+              : "";
+          out(
+            `  vision     ${result.frameAnalyses} frames described in ${result.visionSessions} session${result.visionSessions === 1 ? "" : "s"}${skipped}`,
+          );
         }
         out(`  graph      ${result.kg.nodes.length} nodes, ${result.kg.edges.length} edges (${result.graphWindows} window${result.graphWindows === 1 ? "" : "s"})`);
         out(`  values     ${persisted.values} extracted, ${persisted.grounded} grounded in ${persisted.evidenceRows} evidence spans`);

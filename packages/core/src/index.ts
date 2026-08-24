@@ -5,3 +5,4 @@ export * from "./media-pipeline.js";
 export * from "./kg.js";
 export * from "./review-signals.js";
 export * from "./extraction.js";
+export * from "./frame-budget.js";
