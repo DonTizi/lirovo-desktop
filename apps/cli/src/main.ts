@@ -1,12 +1,20 @@
 import { isLirovoError } from "@lirovo/contracts";
 import { boolFlag, parseArgs } from "./args.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { DEFAULT_FRAME_CAP, extractCommand } from "./commands/extract.js";
 import { EXIT, type ExitCode } from "./exit-codes.js";
 
 const HELP = `lirovo — local-first structured extraction for video
 
 usage
-  lirovo doctor [--json]        check dependencies, inference backends and paths
+  lirovo doctor [--json]                    check dependencies, backends and paths
+  lirovo extract <url|file> --no-inference  ingest, normalize, detect and dedup
+                                            frames, transcribe. No model calls.
+
+extract flags
+  --no-inference                required today: the model stages are not wired yet
+  --frame-cap <n>               refuse a source yielding more scene changes
+                                (default ${DEFAULT_FRAME_CAP})
 
 global flags
   --json                        machine-readable output on stdout
@@ -42,6 +50,32 @@ export const main = async (argv: readonly string[]): Promise<void> => {
       case "doctor":
         code = await doctorCommand({ json }, out);
         break;
+      case "extract": {
+        const source = args.positionals[0];
+        if (source === undefined) {
+          errOut("extract needs a URL or a file path\n");
+          errOut(HELP);
+          code = EXIT.usage;
+          break;
+        }
+        // Refusing rather than silently doing half the job: a user who expects
+        // typed values back should not get a transcript and assume that is all
+        // there is. The flag becomes optional once the model stages land.
+        if (!boolFlag(args, "no-inference")) {
+          errOut("the model stages are not wired yet — re-run with --no-inference to do the media and transcription half");
+          code = EXIT.unavailable;
+          break;
+        }
+        const rawCap = args.flags["frame-cap"];
+        const frameCap = typeof rawCap === "string" ? Number(rawCap) : DEFAULT_FRAME_CAP;
+        if (!Number.isFinite(frameCap) || frameCap <= 0) {
+          errOut(`--frame-cap must be a positive number, got "${String(rawCap)}"`);
+          code = EXIT.usage;
+          break;
+        }
+        code = await extractCommand({ source, json, frameCap, noInference: true }, out, errOut);
+        break;
+      }
       default:
         errOut(`unknown command "${args.command}"\n`);
         errOut(HELP);
