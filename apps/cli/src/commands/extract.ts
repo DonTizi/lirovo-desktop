@@ -146,17 +146,18 @@ export const extractCommand = async (
     let backend: InferenceBackend | null = null;
     let dataSchema: Record<string, unknown> | null = null;
 
+    const tuning = {
+      ...(opts.model !== null ? { model: opts.model } : {}),
+      // Describing a frame is perception, not reasoning. The default is the
+      // cheapest setting because the measured runs read frames accurately at
+      // it, and anything more is billed against the quota the user codes with.
+      effort: opts.effort ?? ("low" as const),
+    };
+
     if (!mediaOnly) {
       // Resolve the backend BEFORE any download: discovering there is nothing
       // to reason with after a twenty-minute ingest is the worst moment to
       // find out.
-      const tuning = {
-        ...(opts.model !== null ? { model: opts.model } : {}),
-        // Describing a frame is perception, not reasoning. The default is the
-        // cheapest setting because the measured runs read frames accurately at
-        // it, and anything more is billed against the quota the user codes with.
-        effort: opts.effort ?? ("low" as const),
-      };
       backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), opts.backendId);
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
@@ -173,6 +174,15 @@ export const extractCommand = async (
             inference: buildInferenceStages({
               backend: backend as InferenceBackend,
               store,
+              // Only when the user did not pick a model themselves.
+              ...(opts.model === null
+                ? {
+                    withModel: (id: string, model: string) =>
+                      buildBackends({ exec: realExec, paths, tuning: { ...tuning, model } }).find(
+                        (b) => b.id === id,
+                      ) ?? null,
+                  }
+                : {}),
               onVisionBatch: (done, total) =>
                 onEvent({ type: "stage:progress", runId, stage: "vision", done, total, note: "sessions" }),
               onWindow: (done, total) =>

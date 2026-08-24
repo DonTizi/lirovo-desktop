@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { claudeSpec } from "./claude.js";
 import { codexSpec } from "./codex.js";
+import { VISION_MODEL_BY_BACKEND } from "../vision.js";
 
 describe("claude adapter", () => {
   it("passes the schema inline, not as a path", () => {
@@ -42,5 +43,23 @@ describe("codex adapter", () => {
       expect.arrayContaining(["-", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check"]),
     );
     expect(args[args.indexOf("--sandbox") + 1]).toBe("read-only");
+  });
+});
+
+describe("cheap model for frames", () => {
+  it("puts the small model on the command line when tuning asks for it", () => {
+    // Measured on the same twenty frames: haiku is 54.3s and $0.13, the
+    // default model 77.7s and $0.79, with identical coverage.
+    const args = claudeSpec.buildArgs({ schemaPath: null, schemaInline: null, tuning: { model: "haiku" } });
+    expect(args[args.indexOf("--model") + 1]).toBe("haiku");
+  });
+
+  it("names claude as the backend whose frames go to a cheap model by default", () => {
+    expect(VISION_MODEL_BY_BACKEND["claude"]).toBe("haiku");
+  });
+
+  it("passes reasoning effort to codex, which has a flag for it", () => {
+    const args = codexSpec.buildArgs({ schemaPath: null, schemaInline: null, tuning: { effort: "low" } });
+    expect(args[args.indexOf("-c") + 1]).toBe("model_reasoning_effort=low");
   });
 });

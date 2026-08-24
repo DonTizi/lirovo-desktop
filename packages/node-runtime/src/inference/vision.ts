@@ -42,6 +42,26 @@ export const DEFAULT_VISION_BATCH = 20;
  */
 export const DEFAULT_VISION_CONCURRENCY = 2;
 
+/**
+ * The model each backend should use for frames, unless the caller says otherwise.
+ *
+ * Measured on the same twenty frames, same prompt, all three covering 20/20
+ * with 21/21 valid lines:
+ *
+ *   codex (low effort)      56.6 s
+ *   claude (default model)  77.7 s   $0.79 by Claude Code's own accounting
+ *   claude --model haiku    54.3 s   $0.13
+ *
+ * The small model is both the fastest and six times cheaper, at no cost in
+ * coverage or in OCR quality. Describing a frame is perception; the expensive
+ * model's advantage is reasoning, which this task does not use.
+ *
+ * This is a default, not a lock: `--model` overrides it.
+ */
+export const VISION_MODEL_BY_BACKEND: Readonly<Record<string, string>> = {
+  claude: "haiku",
+};
+
 const SYSTEM_PROMPT = `You describe frames sampled from a video. You are precise and you never guess.
 
 For every frame you are given, output exactly one JSON object on its own line:

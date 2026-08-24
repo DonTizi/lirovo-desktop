@@ -2,7 +2,7 @@ import type { ArtifactStore, InferenceBackend } from "@lirovo/contracts";
 import type { InferenceStages } from "@lirovo/core";
 import { runPassA } from "./pass-a.js";
 import { runPassB } from "./pass-b.js";
-import { runVision } from "./vision.js";
+import { runVision, VISION_MODEL_BY_BACKEND } from "./vision.js";
 
 export interface InferenceStagesDeps {
   readonly backend: InferenceBackend;
@@ -11,15 +11,23 @@ export interface InferenceStagesDeps {
   readonly onVisionBatch?: (done: number, total: number) => void;
   /** Vision may run on a cheaper backend than reasoning. Defaults to the same one. */
   readonly visionBackend?: InferenceBackend;
+  /** Build a backend bound to a specific model, for the cheap vision default. */
+  readonly withModel?: (backendId: string, model: string) => InferenceBackend | null;
 }
 
 /** Bind the two model stages to one backend. */
 export const buildInferenceStages = (deps: InferenceStagesDeps): InferenceStages => ({
   describeFrames: async (input) => {
-    const backend = deps.visionBackend ?? deps.backend;
-    if (backend.capabilities.images === "none") {
+    const chosen = deps.visionBackend ?? deps.backend;
+    if (chosen.capabilities.images === "none") {
       return { analyses: [], sessions: 0, framesMissing: 0 };
     }
+    // Frames go to the cheap model by default; see VISION_MODEL_BY_BACKEND.
+    const cheapModel = VISION_MODEL_BY_BACKEND[chosen.id];
+    const backend =
+      cheapModel !== undefined && deps.withModel !== undefined
+        ? (deps.withModel(chosen.id, cheapModel) ?? chosen)
+        : chosen;
     const result = await runVision(
       { runId: input.runId, signal: input.signal as AbortSignal },
       {
