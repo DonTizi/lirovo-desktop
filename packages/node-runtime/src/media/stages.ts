@@ -48,7 +48,7 @@ export const buildMediaStages = async (deps: MediaStagesDeps): Promise<MediaStag
     normalize: (input) =>
       normalize(
         { ...input, signal: input.signal as AbortSignal },
-        { exec: deps.exec, store: deps.store, ffmpeg: ffmpeg.path },
+        { exec: deps.exec, store: deps.store, ffmpeg: ffmpeg.path, ffprobe: ffprobe.path },
       ),
 
     sceneDetect: async (input) => {

@@ -7,7 +7,8 @@ import {
   summarizeFfmpegFailure,
 } from "./scene-detect.js";
 import { parseProbe } from "./probe.js";
-import { isUrl, parseYtDlpPrints, sourceTypeOf } from "./ingest.js";
+import { isPartialDownload, isUrl, parseYtDlpPrints, sourceTypeOf } from "./ingest.js";
+import { durationTolerance } from "./normalize.js";
 import { clusterByPhash } from "./dedup.js";
 import { hammingDistance, phash } from "./phash.js";
 
@@ -203,5 +204,47 @@ describe("isEmptySelection", () => {
   it("does not swallow a genuine decode failure", () => {
     expect(isEmptySelection("[mjpeg @ 0x1] Error while opening encoder")).toBe(false);
     expect(isEmptySelection("Invalid data found when processing input")).toBe(false);
+  });
+});
+
+describe("isPartialDownload", () => {
+  it("rejects what yt-dlp leaves mid-download", () => {
+    // A file truncated to 40% still probes as the FULL duration, because the
+    // header at the front describes a video the file no longer contains — so
+    // nothing downstream would catch it.
+    expect(isPartialDownload("source.mp4.part")).toBe(true);
+    expect(isPartialDownload("source.mp4.ytdl")).toBe(true);
+    expect(isPartialDownload("source.f399.mp4")).toBe(true);
+    expect(isPartialDownload("source.webm.temp")).toBe(true);
+  });
+
+  it("accepts a finished download", () => {
+    expect(isPartialDownload("source.mp4")).toBe(false);
+    expect(isPartialDownload("source.webm")).toBe(false);
+    expect(isPartialDownload("source.m4a")).toBe(false);
+  });
+
+  it("does not mistake a version-looking name for a fragment", () => {
+    expect(isPartialDownload("source.mp4")).toBe(false);
+    expect(isPartialDownload("source.part2.mp4")).toBe(false);
+  });
+});
+
+describe("durationTolerance", () => {
+  it("gives a second of slack to short clips, where rounding dominates", () => {
+    expect(durationTolerance(10)).toBe(1);
+  });
+
+  it("scales for long recordings, where a second is unreasonably tight", () => {
+    expect(durationTolerance(3600)).toBe(72);
+  });
+
+  it("would have caught the real case: 19s promised, 6.5s decoded", () => {
+    // Measured on a genuinely truncated download.
+    expect(19.014 - 6.533).toBeGreaterThan(durationTolerance(19.014));
+  });
+
+  it("does not fire on a container that rounds", () => {
+    expect(19.014 - 19.013).toBeLessThan(durationTolerance(19.014));
   });
 });

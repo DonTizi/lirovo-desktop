@@ -28,6 +28,20 @@ export interface IngestResult {
 
 export const isUrl = (source: string): boolean => /^https?:\/\//i.test(source);
 
+/**
+ * Files yt-dlp leaves behind that are NOT playable media.
+ *
+ * It writes to `<name>.part` and renames on completion, keeps `.ytdl` resume
+ * state, and for a separate video+audio download leaves format-tagged
+ * fragments like `source.f399.mp4`. All of them begin with the output stem, so
+ * a naive "first file starting with source." picks one of them after any
+ * interruption — and an mp4 truncated to 40% still probes as the full duration,
+ * because the header at the front describes a video the file no longer
+ * contains. Nothing downstream would notice.
+ */
+export const isPartialDownload = (name: string): boolean =>
+  /\.(part|ytdl|temp|tmp)$/i.test(name) || /\.f\d+\./i.test(name);
+
 export const sourceTypeOf = (source: string): SourceManifest["source_type"] => {
   if (!isUrl(source)) return "file";
   const host = (() => {
@@ -126,7 +140,7 @@ export const ingest = async (input: IngestInput, deps: IngestDeps): Promise<Inge
     if (printed.filePath !== null && printed.filePath.startsWith(deps.workDir)) {
       mediaPath = printed.filePath;
     } else {
-      const found = (await readdir(deps.workDir)).find((f) => f.startsWith("source."));
+      const found = (await readdir(deps.workDir)).find((f) => f.startsWith("source.") && !isPartialDownload(f));
       if (found === undefined) throw new LirovoError("DOWNLOAD_FAILED", "yt-dlp wrote no media", { stage: "ingest" });
       mediaPath = path.join(deps.workDir, found);
     }

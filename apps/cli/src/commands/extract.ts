@@ -97,6 +97,25 @@ const renderResult = (runId: string, result: MediaPipelineResult): string => {
 const isExtraction = (result: MediaPipelineResult | ExtractionResult): result is ExtractionResult =>
   "kg" in result;
 
+/**
+ * Failures a second attempt could get past.
+ *
+ * Everything else is a property of the input — a truncated download, an
+ * unreadable source, a schema nothing can satisfy — and will fail the same way
+ * however many times it runs.
+ */
+const RESUMABLE: ReadonlySet<string> = new Set([
+  "CANCELLED",
+  "TIMED_OUT",
+  "INFERENCE_FAILED",
+  "INFERENCE_TRUNCATED",
+  "INFERENCE_QUOTA_EXCEEDED",
+  "TRANSCRIBE_FAILED",
+  "DOWNLOAD_FAILED",
+  "STORE_BUSY",
+  "INTERNAL",
+]);
+
 const resolveInferenceBackend = async (
   backends: readonly InferenceBackend[],
   wanted: string | null,
@@ -327,9 +346,10 @@ export const extractCommand = async (
       out(JSON.stringify({ ok: false, run_id: runId, error: payload }, null, 2));
     } else {
       errOut(`${payload.code}: ${payload.message}`);
-      // Without this the run id is unrecoverable and the work already done is
-      // lost, which defeats the point of having recorded it.
-      if (runs.getRun(runId) !== null) {
+      // Only when resuming could actually help. A truncated source or a schema
+      // the model cannot satisfy will fail identically the second time, and
+      // offering a command that cannot work sends the user round a loop.
+      if (RESUMABLE.has(payload.code) && runs.getRun(runId) !== null) {
         errOut(`run ${runId} — resume with:  lirovo extract ${opts.source} --resume ${runId}`);
       }
     }

@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import type { ArtifactStore, Exec, NormalizeResult, SourceManifest } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, LirovoError } from "@lirovo/contracts";
+import { probeMedia } from "./probe.js";
 
 export interface NormalizeInput {
   readonly runId: string;
@@ -14,7 +15,18 @@ export interface NormalizeDeps {
   readonly exec: Exec;
   readonly store: ArtifactStore;
   readonly ffmpeg: string;
+  /** Used to check that what came out matches what the source claimed. */
+  readonly ffprobe: string;
 }
+
+/**
+ * How far the decoded audio may fall short of the promised duration.
+ *
+ * Containers round and a final partial frame is normal, so a second of slack
+ * absorbs the honest cases. Two percent covers long recordings where a second
+ * is unreasonably tight.
+ */
+export const durationTolerance = (durationS: number): number => Math.max(1, durationS * 0.02);
 
 /**
  * Produce the two files the rest of the pipeline reads.
@@ -52,6 +64,26 @@ export const normalize = async (input: NormalizeInput, deps: NormalizeDeps): Pro
     });
 
   const audioBytes = (await stat(audioPath)).size;
+
+  // What was decoded, against what the container promised.
+  //
+  // A download killed halfway leaves a file whose header still describes the
+  // whole video, so ffprobe reports the full duration and every guard upstream
+  // is satisfied. The only thing that knows the truth is the decoder: it
+  // produced 6.5 seconds of audio for a source claiming 19. Without this the
+  // run succeeds, transcribes a third of the talk, and says nothing.
+  const promised = input.manifest.duration_s;
+  if (promised > 0) {
+    const decoded = await probeMedia(deps.exec, deps.ffprobe, audioPath).catch(() => null);
+    const actual = decoded?.durationS ?? 0;
+    if (actual > 0 && promised - actual > durationTolerance(promised)) {
+      throw new LirovoError(
+        "SOURCE_TRUNCATED",
+        `the source claims ${promised.toFixed(1)}s but only ${actual.toFixed(1)}s could be decoded — the download or the file is incomplete`,
+        { stage: "normalize", detail: { promisedS: promised, decodedS: actual } },
+      );
+    }
+  }
   let videoBytes: number | null = null;
 
   if (input.manifest.has_video) {
