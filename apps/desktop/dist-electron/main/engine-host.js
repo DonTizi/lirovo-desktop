@@ -3813,6 +3813,10 @@ discriminatedUnionType("type", [
   objectType({ type: literalType("run:start"), runId: stringType(), at: numberType() }),
   objectType({ type: literalType("stage:start"), runId: stringType(), stage: stageSchema, attempt: numberType().int().min(1) }),
   objectType({ type: literalType("stage:resumed"), runId: stringType(), stage: stageSchema }),
+  // A stage that will never run for THIS source — no frames to dedup, no
+  // backend to see them. Distinct from "waiting", which a user reads as
+  // "still to come" and which never resolves.
+  objectType({ type: literalType("stage:skipped"), runId: stringType(), stage: stageSchema, why: stringType() }),
   objectType({
     type: literalType("stage:progress"),
     runId: stringType(),
@@ -4093,16 +4097,22 @@ const runMediaPipeline = async (input, deps) => {
         signal: input.signal
       })),
       (async () => {
-        if (normalized.value.video_path === null)
+        if (normalized.value.video_path === null) {
+          for (const skipped of ["scene-detect", "dedup"]) {
+            emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
+          }
           return { raw: 0, kept: 0, dropped: 0 };
+        }
         const detected = await stage("scene-detect", normalized.hash, { frameCap: input.frameCap }, () => deps.stages.sceneDetect({
           runId: input.runId,
           videoPath: normalized.value.video_path,
           frameCap: input.frameCap,
           signal: input.signal
         }));
-        if (detected.value.rawFrameCount === 0)
+        if (detected.value.rawFrameCount === 0) {
+          emit({ type: "stage:skipped", runId: input.runId, stage: "dedup", why: "no scene changes were detected" });
           return { raw: 0, kept: 0, dropped: 0 };
+        }
         const deduped = await stage("dedup", detected.hash, null, () => deps.stages.dedup({ runId: input.runId, signal: input.signal }));
         return {
           raw: detected.value.rawFrameCount,
@@ -4242,6 +4252,10 @@ const mergeWindowKgs = (parts, durationS) => {
   }
   return { version: "1.0", duration_s: durationS, nodes, edges, evidence };
 };
+const hasSpeech = (segments) => segments.some((segment) => {
+  const bare = segment.text.replace(/\[[^\]]*\]/g, "").replace(/\([^)]*\)/g, "").replace(/[^\p{L}\p{N}]+/gu, "").trim();
+  return bare.length > 0;
+});
 const PRIORITY_VERSION = 1;
 const deriveReviewSignals = (input) => {
   const modalities = new Set(input.evidence.map((e) => e.modality === "both" ? "audio" : e.modality));
@@ -4304,6 +4318,14 @@ const runExtraction = async (input, deps) => {
   let analyses = [];
   let visionSessions = 0;
   let framesSkippedForBudget = 0;
+  if (deps.inference.describeFrames === void 0 || media.keptFrameCount === 0) {
+    emit({
+      type: "stage:skipped",
+      runId: input.runId,
+      stage: "vision",
+      why: media.keptFrameCount === 0 ? "no frames to describe" : "no backend can see images"
+    });
+  }
   if (deps.inference.describeFrames !== void 0 && media.keptFrameCount > 0) {
     try {
       const described = await stage("vision", { frames: media.keptFrameCount }, () => deps.inference.describeFrames({
@@ -4338,6 +4360,10 @@ const runExtraction = async (input, deps) => {
       media.degraded.push({ stage: "vision", code: lirovo.code, message: lirovo.message });
       emit({ type: "stage:degraded", runId: input.runId, stage: "vision", code: lirovo.code, message: lirovo.message });
     }
+  }
+  if (!hasSpeech(media.transcript.segments) && analyses.length === 0) {
+    const missing = media.keptFrameCount === 0 ? "no speech and no scene changes" : "no speech, and no frames were described";
+    throw new LirovoError("NOTHING_TO_EXTRACT", `this source has ${missing} — there is nothing to extract from it`, { stage: "graph", runId: input.runId });
   }
   const graph = await stage("graph", { frames: analyses.length }, () => deps.inference.buildGraph({
     segments: media.transcript.segments,

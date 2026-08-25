@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleCheck, CircleDashed, CircleX, Loader2, Upload } from "lucide-react";
+import { CircleCheck, CircleDashed, CircleSlash, CircleX, Loader2, Upload } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
@@ -20,7 +20,7 @@ const DEFAULT_SCHEMA = `{
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 interface StageState {
-  readonly state: "waiting" | "active" | "done" | "failed";
+  readonly state: "waiting" | "active" | "done" | "failed" | "skipped";
   readonly meta: string;
 }
 
@@ -50,6 +50,9 @@ const useStages = (): {
         case "stage:resumed":
           next.set(event.stage, { state: "done", meta: "resumed" });
           break;
+        case "stage:skipped":
+          next.set(event.stage, { state: "skipped", meta: event.why });
+          break;
         case "stage:progress":
           next.set(event.stage, {
             state: "active",
@@ -77,12 +80,24 @@ const useStages = (): {
 
 const StageRow = ({ stage, state }: { stage: Stage; state: StageState | undefined }): JSX.Element => {
   const kind = state?.state ?? "waiting";
-  const Icon = kind === "done" ? CircleCheck : kind === "failed" ? CircleX : kind === "active" ? Loader2 : CircleDashed;
+  // A skipped stage gets its own mark. Leaving it as a pending circle reads as
+  // "still to come" and never resolves, which is the one state that makes a
+  // finished run look stuck.
+  const Icon =
+    kind === "done"
+      ? CircleCheck
+      : kind === "failed"
+        ? CircleX
+        : kind === "skipped"
+          ? CircleSlash
+          : kind === "active"
+            ? Loader2
+            : CircleDashed;
   return (
     <div
       className={cn(
         "border-hairline flex items-center gap-2.5 border-b px-4 py-2 last:border-b-0",
-        kind === "waiting" && "opacity-55",
+        (kind === "waiting" || kind === "skipped") && "opacity-55",
       )}
     >
       <Icon
@@ -91,7 +106,7 @@ const StageRow = ({ stage, state }: { stage: Stage; state: StageState | undefine
           kind === "done" && "text-success",
           kind === "failed" && "text-danger",
           kind === "active" && "text-brand animate-spin",
-          kind === "waiting" && "text-ink-subtle",
+          (kind === "waiting" || kind === "skipped") && "text-ink-subtle",
         )}
       />
       <span className={cn("flex-1", kind === "active" ? "text-ink-strong font-medium" : "text-ink-label")}>{stage}</span>

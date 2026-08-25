@@ -10,6 +10,7 @@ import type { Kg } from "./kg.js";
 import type { MediaPipelineDeps, MediaPipelineInput, MediaPipelineResult } from "./media-pipeline.js";
 import { runMediaPipeline } from "./media-pipeline.js";
 import { chainHash, noLedger } from "./ledger.js";
+import { hasSpeech } from "./kg.js";
 
 /** The model stages, behind a port so core stays free of any provider. */
 export interface InferenceStages {
@@ -120,6 +121,14 @@ export const runExtraction = async (
   let analyses: readonly FrameAnalysis[] = [];
   let visionSessions = 0;
   let framesSkippedForBudget = 0;
+  if (deps.inference.describeFrames === undefined || media.keptFrameCount === 0) {
+    emit({
+      type: "stage:skipped",
+      runId: input.runId,
+      stage: "vision",
+      why: media.keptFrameCount === 0 ? "no frames to describe" : "no backend can see images",
+    });
+  }
   if (deps.inference.describeFrames !== undefined && media.keptFrameCount > 0) {
     try {
       const described = await stage("vision", { frames: media.keptFrameCount }, () =>
@@ -157,6 +166,22 @@ export const runExtraction = async (
       media.degraded.push({ stage: "vision", code: lirovo.code, message: lirovo.message });
       emit({ type: "stage:degraded", runId: input.runId, stage: "vision", code: lirovo.code, message: lirovo.message });
     }
+  }
+
+  // Nothing to build from, so do not pay a model to discover that.
+  //
+  // A ten-second music bed transcribes to `[Music]` and detects no scene
+  // changes. Sending that to the graph stage cost 10.7s and a slice of the
+  // user's quota to be told what was already knowable: this source has no
+  // speech and no visual change, so there is nothing in it to extract. The
+  // message names what is missing rather than blaming the model.
+  if (!hasSpeech(media.transcript.segments) && analyses.length === 0) {
+    const missing = media.keptFrameCount === 0 ? "no speech and no scene changes" : "no speech, and no frames were described";
+    throw new LirovoError(
+      "NOTHING_TO_EXTRACT",
+      `this source has ${missing} — there is nothing to extract from it`,
+      { stage: "graph", runId: input.runId },
+    );
   }
 
   const graph = await stage("graph", { frames: analyses.length }, () =>

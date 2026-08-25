@@ -190,7 +190,12 @@ export const runMediaPipeline = async (
         }),
       ),
       (async () => {
-        if (normalized.value.video_path === null) return { raw: 0, kept: 0, dropped: 0 };
+        if (normalized.value.video_path === null) {
+          for (const skipped of ["scene-detect", "dedup"] as const) {
+            emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
+          }
+          return { raw: 0, kept: 0, dropped: 0 };
+        }
         const detected = await stage("scene-detect", normalized.hash, { frameCap: input.frameCap }, () =>
           deps.stages.sceneDetect({
             runId: input.runId,
@@ -199,7 +204,11 @@ export const runMediaPipeline = async (
             signal: input.signal,
           }),
         );
-        if (detected.value.rawFrameCount === 0) return { raw: 0, kept: 0, dropped: 0 };
+        if (detected.value.rawFrameCount === 0) {
+          // An uncut recording is a real answer, not a pending stage.
+          emit({ type: "stage:skipped", runId: input.runId, stage: "dedup", why: "no scene changes were detected" });
+          return { raw: 0, kept: 0, dropped: 0 };
+        }
         const deduped = await stage("dedup", detected.hash, null, () =>
           deps.stages.dedup({ runId: input.runId, signal: input.signal }),
         );

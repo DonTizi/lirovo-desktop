@@ -3755,6 +3755,10 @@ const pipelineEventSchema = discriminatedUnionType("type", [
   objectType({ type: literalType("run:start"), runId: stringType(), at: numberType() }),
   objectType({ type: literalType("stage:start"), runId: stringType(), stage: stageSchema, attempt: numberType().int().min(1) }),
   objectType({ type: literalType("stage:resumed"), runId: stringType(), stage: stageSchema }),
+  // A stage that will never run for THIS source — no frames to dedup, no
+  // backend to see them. Distinct from "waiting", which a user reads as
+  // "still to come" and which never resolves.
+  objectType({ type: literalType("stage:skipped"), runId: stringType(), stage: stageSchema, why: stringType() }),
   objectType({
     type: literalType("stage:progress"),
     runId: stringType(),

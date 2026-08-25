@@ -12,6 +12,10 @@ export const pipelineEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("run:start"), runId: z.string(), at: z.number() }),
   z.object({ type: z.literal("stage:start"), runId: z.string(), stage: stageSchema, attempt: z.number().int().min(1) }),
   z.object({ type: z.literal("stage:resumed"), runId: z.string(), stage: stageSchema }),
+  // A stage that will never run for THIS source — no frames to dedup, no
+  // backend to see them. Distinct from "waiting", which a user reads as
+  // "still to come" and which never resolves.
+  z.object({ type: z.literal("stage:skipped"), runId: z.string(), stage: stageSchema, why: z.string() }),
   z.object({
     type: z.literal("stage:progress"),
     runId: z.string(),

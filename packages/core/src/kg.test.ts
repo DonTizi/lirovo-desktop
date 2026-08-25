@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptSegment } from "@lirovo/contracts";
-import { backfillNodeTimestamps, cleanKg, mergeWindowKgs, planWindows, type Kg } from "./kg.js";
+import { backfillNodeTimestamps, cleanKg, hasSpeech, mergeWindowKgs, planWindows, type Kg } from "./kg.js";
 import { leafPaths } from "./extraction.js";
 
 const seg = (id: string, tStart: number, tEnd: number, text: string): TranscriptSegment => ({
@@ -186,5 +186,42 @@ describe("leafPaths", () => {
 
   it("counts null as a leaf, because a null still needs grounding", () => {
     expect(leafPaths({ owner: null })).toEqual(["owner"]);
+  });
+});
+
+describe("hasSpeech", () => {
+  const seg = (text: string): TranscriptSegment => ({
+    id: "seg_0",
+    speaker: null,
+    tStart: 0,
+    tEnd: 1,
+    text,
+    words: [],
+  });
+
+  it("rejects the labels whisper emits for non-speech", () => {
+    // A ten-second music bed transcribes to exactly this, and it is seven
+    // characters of nothing anyone said.
+    expect(hasSpeech([seg("[Music]")])).toBe(false);
+    expect(hasSpeech([seg("[BLANK_AUDIO]")])).toBe(false);
+    expect(hasSpeech([seg("(wind blowing)")])).toBe(false);
+    expect(hasSpeech([seg("  [Music]  ")])).toBe(false);
+  });
+
+  it("accepts real speech, including next to a label", () => {
+    expect(hasSpeech([seg("so here we are")])).toBe(true);
+    expect(hasSpeech([seg("[Music] welcome back")])).toBe(true);
+  });
+
+  it("rejects punctuation with no words", () => {
+    expect(hasSpeech([seg("... ---")])).toBe(false);
+  });
+
+  it("rejects an empty transcript", () => {
+    expect(hasSpeech([])).toBe(false);
+  });
+
+  it("accepts non-Latin speech", () => {
+    expect(hasSpeech([seg("伊東駅に着きました")])).toBe(true);
   });
 });

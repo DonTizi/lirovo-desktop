@@ -177,3 +177,22 @@ export const mergeWindowKgs = (parts: readonly { window: Window; kg: Kg }[], dur
 
   return { version: "1.0", duration_s: durationS, nodes, edges, evidence };
 };
+
+/**
+ * Does this transcript contain anything anyone said?
+ *
+ * Whisper labels non-speech rather than returning nothing: a music bed comes
+ * back as `[Music]`, silence as `[BLANK_AUDIO]`, ambience as `(wind blowing)`.
+ * Seven characters of `[Music]` is a transcript by every structural measure and
+ * has nothing in it to extract, so the difference has to be tested rather than
+ * assumed from a non-zero length.
+ */
+export const hasSpeech = (segments: readonly TranscriptSegment[]): boolean =>
+  segments.some((segment) => {
+    const bare = segment.text
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/\([^)]*\)/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, "")
+      .trim();
+    return bare.length > 0;
+  });
