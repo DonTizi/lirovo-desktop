@@ -22,6 +22,8 @@ extract flags
                                 (default 15). Over budget, frames are chosen to
                                 cover the whole video rather than truncated.
   --concurrency <n>             vision sessions in flight (default 4)
+  --resume <run_id>             continue an interrupted run, reusing every stage
+                                that finished on the same inputs
   --no-inference                skip the model stages entirely
   --frame-cap <n>               refuse a source yielding more scene changes
                                 (default ${DEFAULT_FRAME_CAP})
@@ -81,6 +83,7 @@ export const main = async (argv: readonly string[]): Promise<void> => {
         const modelFlag = args.flags["model"];
         const budgetFlag = args.flags["time-budget"];
         const concFlag = args.flags["concurrency"];
+        const resumeFlag = args.flags["resume"];
         const visionBudgetS = typeof budgetFlag === "string" ? Number(budgetFlag) * 60 : 15 * 60;
         if (!Number.isFinite(visionBudgetS) || visionBudgetS <= 0) {
           errOut(`--time-budget must be a positive number of minutes, got "${String(budgetFlag)}"`);
@@ -111,6 +114,7 @@ export const main = async (argv: readonly string[]): Promise<void> => {
             effort: typeof effortFlag === "string" ? (effortFlag as "low" | "medium" | "high") : null,
             visionBudgetS,
             concurrency: typeof concFlag === "string" ? Number(concFlag) : null,
+            resumeRunId: typeof resumeFlag === "string" ? resumeFlag : null,
           },
           out,
           errOut,

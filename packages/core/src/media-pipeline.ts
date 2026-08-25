@@ -9,6 +9,7 @@ import type {
   Transcript,
 } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, LirovoError, asLirovoError, mergeStagePointer } from "@lirovo/contracts";
+import { chainHash, noLedger, type StageLedger } from "./ledger.js";
 
 /**
  * The concrete media stages, behind a port.
@@ -50,6 +51,21 @@ export interface MediaPipelineDeps {
   readonly store: ArtifactStore;
   readonly onEvent?: PipelineEventListener;
   readonly now: () => number;
+  readonly sha256: (input: string) => string;
+  /**
+   * Where completed stages are recorded, and where a resumed run reads from.
+   * Absent means every stage runs — which is the right default for a caller
+   * that has nowhere to persist the ledger.
+   */
+  readonly ledger?: StageLedger;
+  /**
+   * Called once the source is known, before any expensive stage.
+   *
+   * The run row cannot exist before this point — it references a source whose
+   * identity is the content hash, and that is what ingest computes. Everything
+   * after this callback is ledgered and therefore resumable.
+   */
+  readonly onIngested?: (manifest: SourceManifest) => void;
 }
 
 export interface MediaPipelineResult {
@@ -60,6 +76,8 @@ export interface MediaPipelineResult {
   readonly droppedFrameCount: number;
   /** Stages that failed without failing the run. Appended to as later stages degrade. */
   readonly degraded: { stage: Stage; code: string; message: string }[];
+  /** The hash the next stage chains from. Internal, but the model stages need it. */
+  readonly chainTip: string;
 }
 
 /**
@@ -80,54 +98,116 @@ export const runMediaPipeline = async (
   const emit = deps.onEvent ?? ((): void => {});
   emit({ type: "run:start", runId: input.runId, at: deps.now() });
 
-  const stage = async <T>(name: Stage, run: () => Promise<T>): Promise<T> => {
+  const ledger = deps.ledger ?? noLedger;
+
+  /**
+   * Run a stage, or hand back what an earlier attempt already produced.
+   *
+   * The hash chains through every stage before this one, so a cache entry can
+   * only match when the whole upstream produced the same thing and this
+   * stage's own parameters are unchanged. That is what makes it safe to skip
+   * two hundred seconds of frame description after a crash, and what makes a
+   * changed threshold correctly redo the work.
+   */
+  const stage = async <T>(
+    name: Stage,
+    previousHash: string,
+    params: unknown,
+    run: () => Promise<T>,
+  ): Promise<{ value: T; hash: string }> => {
     pointer = mergeStagePointer(pointer, name);
-    emit({ type: "stage:start", runId: input.runId, stage: name, attempt: 1 });
+    const hash = chainHash(deps.sha256, previousHash, name, params);
+
+    const cached = ledger.cached(name, hash);
+    if (cached !== null) {
+      emit({ type: "stage:resumed", runId: input.runId, stage: name });
+      return { value: cached as T, hash };
+    }
+
+    const attempt = ledger.begin(name, hash);
+    emit({ type: "stage:start", runId: input.runId, stage: name, attempt });
     const startedAt = deps.now();
-    const value = await run();
-    emit({ type: "stage:done", runId: input.runId, stage: name, ms: deps.now() - startedAt });
-    return value;
+    try {
+      const value = await run();
+      ledger.complete(name, attempt, { status: "done", output: value });
+      emit({ type: "stage:done", runId: input.runId, stage: name, ms: deps.now() - startedAt });
+      return { value, hash };
+    } catch (error) {
+      // The failed attempt stays on the record: a retry that erased it would
+      // take the only evidence of what went wrong the first time.
+      const lirovo = asLirovoError(error, "INTERNAL", { stage: name });
+      ledger.complete(name, attempt, { status: "failed", code: lirovo.code, message: lirovo.message });
+      throw lirovo;
+    }
   };
 
   try {
-    const ingested = await stage("ingest", () =>
-      deps.stages.ingest({ runId: input.runId, source: input.source, signal: input.signal }),
-    );
+    // Ingest deliberately bypasses the ledger.
+    //
+    // An attempt row references the run, the run references a source, and the
+    // source's identity is the content hash that ingest is on its way to
+    // computing. Recording this stage would mean writing a row against a run
+    // that cannot exist yet — which is exactly the foreign-key failure this
+    // comment used to describe while the code did the opposite.
+    pointer = mergeStagePointer(pointer, "ingest");
+    emit({ type: "stage:start", runId: input.runId, stage: "ingest", attempt: 1 });
+    const ingestStartedAt = deps.now();
+    const ingestedValue = await deps.stages.ingest({
+      runId: input.runId,
+      source: input.source,
+      signal: input.signal,
+    });
+    emit({ type: "stage:done", runId: input.runId, stage: "ingest", ms: deps.now() - ingestStartedAt });
 
-    const normalized = await stage("normalize", () =>
+    // From here the run row exists, so every later stage is recorded and a
+    // crash is resumable.
+    deps.onIngested?.(ingestedValue.manifest);
+    const ingested = { value: ingestedValue, hash: input.source };
+
+    // Everything downstream chains from the content hash, so re-running the
+    // same file resumes and a different file cannot.
+    const sourceHash = ingested.value.manifest.content_sha256 ?? ingested.hash;
+
+    const normalized = await stage("normalize", sourceHash, { hasVideo: ingested.value.manifest.has_video }, () =>
       deps.stages.normalize({
         runId: input.runId,
-        manifest: ingested.manifest,
-        mediaPath: ingested.mediaPath,
+        manifest: ingested.value.manifest,
+        mediaPath: ingested.value.mediaPath,
         signal: input.signal,
       }),
     );
 
     // Transcription and the visual branch are independent, so they run together
     // — on a long recording the frames are ready by the time whisper finishes.
-    const [transcript, visual] = await Promise.all([
-      stage("asr", () =>
+    const [transcribed, visual] = await Promise.all([
+      stage("asr", normalized.hash, null, () =>
         deps.asr.transcribe({
           runId: input.runId,
-          sourceKind: ingested.manifest.source_type === "file" ? "file" : "url",
+          sourceKind: ingested.value.manifest.source_type === "file" ? "file" : "url",
           sourceUri: input.source,
-          audioPath: normalized.audio_path,
+          audioPath: normalized.value.audio_path,
           signal: input.signal,
         }),
       ),
       (async () => {
-        if (normalized.video_path === null) return { raw: 0, kept: 0, dropped: 0 };
-        const detected = await stage("scene-detect", () =>
+        if (normalized.value.video_path === null) return { raw: 0, kept: 0, dropped: 0 };
+        const detected = await stage("scene-detect", normalized.hash, { frameCap: input.frameCap }, () =>
           deps.stages.sceneDetect({
             runId: input.runId,
-            videoPath: normalized.video_path as string,
+            videoPath: normalized.value.video_path as string,
             frameCap: input.frameCap,
             signal: input.signal,
           }),
         );
-        if (detected.rawFrameCount === 0) return { raw: 0, kept: 0, dropped: 0 };
-        const deduped = await stage("dedup", () => deps.stages.dedup({ runId: input.runId, signal: input.signal }));
-        return { raw: detected.rawFrameCount, kept: deduped.keptCount, dropped: deduped.droppedCount };
+        if (detected.value.rawFrameCount === 0) return { raw: 0, kept: 0, dropped: 0 };
+        const deduped = await stage("dedup", detected.hash, null, () =>
+          deps.stages.dedup({ runId: input.runId, signal: input.signal }),
+        );
+        return {
+          raw: detected.value.rawFrameCount,
+          kept: deduped.value.keptCount,
+          dropped: deduped.value.droppedCount,
+        };
       })().catch((error: unknown) => {
         // The visual branch is enrichment. A source that yields no usable
         // frames still has a transcript worth having, so this degrades rather
@@ -147,6 +227,7 @@ export const runMediaPipeline = async (
       }),
     ]);
 
+    const transcript = transcribed.value;
     await deps.store.put(
       input.runId,
       ARTIFACT_PATHS.transcript,
@@ -155,7 +236,8 @@ export const runMediaPipeline = async (
 
     emit({ type: "run:done", runId: input.runId, ms: deps.now() });
     return {
-      manifest: ingested.manifest,
+      manifest: ingested.value.manifest,
+      chainTip: transcribed.hash,
       transcript,
       rawFrameCount: visual.raw,
       keptFrameCount: visual.kept,

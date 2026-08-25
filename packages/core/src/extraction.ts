@@ -9,6 +9,7 @@ import { LirovoError, asLirovoError } from "@lirovo/contracts";
 import type { Kg } from "./kg.js";
 import type { MediaPipelineDeps, MediaPipelineInput, MediaPipelineResult } from "./media-pipeline.js";
 import { runMediaPipeline } from "./media-pipeline.js";
+import { chainHash, noLedger } from "./ledger.js";
 
 /** The model stages, behind a port so core stays free of any provider. */
 export interface InferenceStages {
@@ -76,15 +77,34 @@ export const runExtraction = async (
   const media = await runMediaPipeline(input, deps);
   const emit = deps.onEvent ?? ((): void => {});
 
-  const stage = async <T>(name: "vision" | "graph" | "reason", run: () => Promise<T>): Promise<T> => {
-    emit({ type: "stage:start", runId: input.runId, stage: name, attempt: 1 });
+  const ledger = deps.ledger ?? noLedger;
+  let tip = media.chainTip;
+
+  const stage = async <T>(
+    name: "vision" | "graph" | "reason",
+    params: unknown,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const hash = chainHash(deps.sha256, tip, name, params);
+    tip = hash;
+
+    const cached = ledger.cached(name, hash);
+    if (cached !== null) {
+      emit({ type: "stage:resumed", runId: input.runId, stage: name });
+      return cached as T;
+    }
+
+    const attempt = ledger.begin(name, hash);
+    emit({ type: "stage:start", runId: input.runId, stage: name, attempt });
     const startedAt = deps.now();
     try {
       const value = await run();
+      ledger.complete(name, attempt, { status: "done", output: value });
       emit({ type: "stage:done", runId: input.runId, stage: name, ms: deps.now() - startedAt });
       return value;
     } catch (error) {
       const lirovo = asLirovoError(error, "INFERENCE_FAILED", { stage: name });
+      ledger.complete(name, attempt, { status: "failed", code: lirovo.code, message: lirovo.message });
       emit(
         lirovo.code === "CANCELLED"
           ? { type: "run:cancelled", runId: input.runId, stage: name }
@@ -102,7 +122,7 @@ export const runExtraction = async (
   let framesSkippedForBudget = 0;
   if (deps.inference.describeFrames !== undefined && media.keptFrameCount > 0) {
     try {
-      const described = await stage("vision", () =>
+      const described = await stage("vision", { frames: media.keptFrameCount }, () =>
         (deps.inference.describeFrames as NonNullable<InferenceStages["describeFrames"]>)({
           runId: input.runId,
           signal: input.signal,
@@ -139,7 +159,7 @@ export const runExtraction = async (
     }
   }
 
-  const graph = await stage("graph", () =>
+  const graph = await stage("graph", { frames: analyses.length }, () =>
     deps.inference.buildGraph({
       segments: media.transcript.segments,
       frames: analyses,
@@ -154,7 +174,7 @@ export const runExtraction = async (
     });
   }
 
-  const extracted = await stage("reason", () =>
+  const extracted = await stage("reason", { schema: input.dataSchema }, () =>
     deps.inference.extract({ kg: graph.kg, dataSchema: input.dataSchema, signal: input.signal }),
   );
 

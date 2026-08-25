@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
@@ -15,6 +15,7 @@ import {
   DEFAULT_VISION_BATCH,
   DEFAULT_VISION_CONCURRENCY,
   buildAsrChain,
+  createStageLedger,
   buildBackends,
   buildInferenceStages,
   buildMediaStages,
@@ -42,6 +43,8 @@ export interface ExtractOptions {
   /** Wall-clock ceiling for frame description, in seconds. */
   readonly visionBudgetS: number;
   readonly concurrency: number | null;
+  /** Continue a run that was interrupted, reusing every stage that finished. */
+  readonly resumeRunId: string | null;
 }
 
 const humanMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
@@ -60,6 +63,8 @@ const renderEvent = (event: PipelineEvent): string | null => {
       return `  ${event.stage} done in ${humanMs(event.ms)}`;
     case "stage:degraded":
       return `  ${event.stage} degraded: ${event.message}`;
+    case "stage:resumed":
+      return `  ${event.stage} resumed from an earlier attempt`;
     case "stage:progress":
       return `  ${event.stage} ${event.done}/${event.total}${event.note === undefined ? "" : ` ${event.note}`}`;
     default:
@@ -142,9 +147,21 @@ export const extractCommand = async (
   };
   process.once("SIGINT", onSigint);
 
-  const runId: string = makeId("run", randomBytes(10));
+  const runId: string = opts.resumeRunId ?? makeId("run", randomBytes(10));
+  const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
 
   try {
+    if (opts.resumeRunId !== null) {
+      if (runs.getRun(opts.resumeRunId) === null) {
+        throw new LirovoError("SOURCE_NOT_FOUND", `no run called ${opts.resumeRunId}`);
+      }
+      // Refuse rather than race: another process may still be working on it,
+      // and two pipelines writing one artifact directory corrupt both.
+      if (!runs.claim(opts.resumeRunId, owner)) {
+        throw new LirovoError("RUN_ALREADY_CLAIMED", `${opts.resumeRunId} is held by another process`);
+      }
+    }
+
     const stages = await buildMediaStages({ exec: realExec, store, paths });
     const asr = buildAsrChain({ exec: realExec, paths });
 
@@ -176,7 +193,24 @@ export const extractCommand = async (
     const concurrency = opts.concurrency ?? DEFAULT_VISION_CONCURRENCY;
     const budget = planForBudget(opts.visionBudgetS, DEFAULT_VISION_BATCH, concurrency);
 
-    const deps = { stages, asr, store, now: () => Date.now(), onEvent };
+    const ledger = createStageLedger(runs, runId);
+    const deps = {
+      stages,
+      asr,
+      store,
+      now: () => Date.now(),
+      onEvent,
+      sha256,
+      ledger,
+      // The run row cannot exist before this: it references a source whose
+      // identity is the content hash, which is what ingest computes. From here
+      // on every stage is recorded, so a crash is resumable.
+      onIngested: (manifest: import("@lirovo/contracts").SourceManifest) => {
+        if (opts.resumeRunId !== null) return;
+        const sourceId = runs.upsertSource(manifest, opts.source);
+        runs.createRun(runId, sourceId, null, owner);
+      },
+    };
     const input = { runId, source: opts.source, frameCap: opts.frameCap, signal: controller.signal };
 
     const result: MediaPipelineResult | ExtractionResult = mediaOnly
@@ -206,11 +240,6 @@ export const extractCommand = async (
             }),
           },
         );
-
-    // Record the run only once it has something to record. A row created up
-    // front would need cleaning up on every failure path.
-    const sourceId = runs.upsertSource(result.manifest, opts.source);
-    runs.createRun(runId, sourceId, null, owner);
 
     let persisted = { values: 0, grounded: 0, evidenceRows: 0 };
     if (isExtraction(result)) {
@@ -294,8 +323,16 @@ export const extractCommand = async (
     const payload = isLirovoError(error)
       ? error.toJSON()
       : { code: "INTERNAL" as const, message: String(error), context: {} };
-    if (opts.json) out(JSON.stringify({ ok: false, run_id: runId, error: payload }, null, 2));
-    else errOut(`${payload.code}: ${payload.message}`);
+    if (opts.json) {
+      out(JSON.stringify({ ok: false, run_id: runId, error: payload }, null, 2));
+    } else {
+      errOut(`${payload.code}: ${payload.message}`);
+      // Without this the run id is unrecoverable and the work already done is
+      // lost, which defeats the point of having recorded it.
+      if (runs.getRun(runId) !== null) {
+        errOut(`run ${runId} — resume with:  lirovo extract ${opts.source} --resume ${runId}`);
+      }
+    }
     return payload.code === "CANCELLED"
       ? EXIT.cancelled
       : payload.code === "NO_INFERENCE_BACKEND"

@@ -143,3 +143,32 @@ describe("run store", () => {
     });
   });
 });
+
+describe("interrupted attempts", () => {
+  it("closes an attempt that was in flight when the process died", () => {
+    const db2 = openMemoryDatabase();
+    const store2 = createRunStore(db2);
+    const source = store2.upsertSource(manifest("abc"), "/tmp/talk.mp4");
+    const run = store2.createRun("run_i", source, null, "process-a");
+    store2.beginAttempt(run.id, "vision", "h1");
+
+    // The lease ages out because nobody is left to renew it.
+    db2.prepare("UPDATE runs SET lease_expires_at = ? WHERE id = ?").run(1, run.id);
+    expect(store2.claim(run.id, "process-b")).toBe(true);
+
+    const row = db2
+      .prepare("SELECT status, error_code FROM run_stage_attempts WHERE run_id = ? AND stage = 'vision'")
+      .get(run.id);
+    expect(row).toMatchObject({ status: "failed", error_code: "INTERRUPTED" });
+  });
+
+  it("does not resume from an interrupted attempt", () => {
+    const db2 = openMemoryDatabase();
+    const store2 = createRunStore(db2);
+    const source = store2.upsertSource(manifest("abc"), "/tmp/talk.mp4");
+    const run = store2.createRun("run_j", source, null, "p");
+    store2.beginAttempt(run.id, "vision", "h1");
+    store2.claim(run.id, "p");
+    expect(store2.cachedStageOutput(run.id, "vision", "h1")).toBeNull();
+  });
+});

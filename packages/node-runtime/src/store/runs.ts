@@ -78,6 +78,16 @@ export const createRunStore = (db: Db): RunStore => ({
   },
 
   claim(runId, owner) {
+    // An attempt that was in flight when the process died would otherwise stay
+    // "running" forever, and any question like "what is still working" would
+    // answer with ghosts. Closing them here is the only moment we know for
+    // certain that nothing is.
+    db.prepare(
+      `UPDATE run_stage_attempts
+          SET status = 'failed', error_code = 'INTERRUPTED', error_message = 'the process died mid-stage', finished_at = ?
+        WHERE run_id = ? AND status = 'running'`,
+    ).run(nowS(), runId);
+
     // One statement, so two processes racing cannot both win: SQLite serialises
     // writers, and the WHERE clause makes the second one match zero rows.
     const result = db
