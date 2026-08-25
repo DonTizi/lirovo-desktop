@@ -24,10 +24,7 @@
     "@lirovo/contracts": "workspace:*",
     "@lirovo/core": "workspace:*",
     "jpeg-js": "^0.4.4",
-    "better-sqlite3": "^12.4.1",
     "@cfworker/json-schema": "^4.1.1"
   },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12"
-  }
+  "devDependencies": {}
 }

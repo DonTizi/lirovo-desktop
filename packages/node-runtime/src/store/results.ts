@@ -161,4 +161,4 @@ export const reviewQueue = (db: Db, runId: string, limit = 50): ReviewQueueRow[]
         ORDER BY s.review_priority DESC, v.field_path
         LIMIT ?`,
     )
-    .all(runId, limit) as ReviewQueueRow[];
+    .all(runId, limit) as unknown as ReviewQueueRow[];
