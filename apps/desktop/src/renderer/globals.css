@@ -1,0 +1,355 @@
+/* Inter Variable, the face dash.cloudflare.com ships. It was already a
+   dependency but never imported: the app was silently running on the Segoe UI
+   stack. Must precede the tailwind layers. */
+@import '@fontsource-variable/inter';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The shell is a column flex that fills the window; without a full-height root
+   the tab body cannot scroll independently of the two fixed header rows. */
+@layer base {
+  html, body, #root { height: 100%; }
+  body { @apply bg-canvas text-ink; }
+}
+
+/*
+ * Kumo tokens, ported from applications/global-iq-web-app (which read them off
+ * dash.cloudflare.com as computed styles, not reproduced from memory): Inter
+ * Variable at a 14px base, oklch throughout, and elevation carried by a 1px ring
+ * shadow instead of a border. Same names, same values, so the two apps stay one
+ * design system rather than two lookalikes that drift.
+ */
+@layer base {
+  :root {
+    /* surfaces */
+    --kumo-canvas: oklch(98.75% 0 0);
+    --kumo-base: #fff;
+    --kumo-elevated: oklch(98% 0 0);
+    --kumo-recessed: oklch(96% 0 0);
+    --kumo-tint: oklch(97% 0 0);
+    --kumo-fill: oklch(92.2% 0 0);
+    --kumo-fill-hover: oklch(96.5% 0 0);
+
+    /* strokes */
+    --kumo-line: oklch(14.5% 0 0 / 0.1);
+    --kumo-hairline: oklch(93.5% 0 0);
+    --kumo-focus: oklch(15% 0 0);
+
+    /* text */
+    --kumo-text: oklch(21% 0.006 285.885);
+    --kumo-text-strong: oklch(14.5% 0 0);
+    --kumo-text-label: oklch(43.9% 0 0);
+    --kumo-text-subtle: oklch(55.6% 0 0);
+    --kumo-text-placeholder: oklch(70.8% 0 0);
+    --kumo-text-inverse: oklch(97% 0 0);
+    --kumo-link: oklch(42.4% 0.199 265.638);
+
+    /* brand: the blue primary action, plus the orange used for brand moments */
+    --kumo-brand: oklch(57.72% 0.2324 260);
+    --kumo-brand-hover: oklch(48.8% 0.243 264.376);
+    --kumo-brand-orange: #f6821f;
+
+    /* semantic */
+    --kumo-info: oklch(68.5% 0.169 237.323);
+    --kumo-info-tint: oklch(93.2% 0.032 255.585);
+    --kumo-info-text: oklch(42.4% 0.199 265.638);
+    --kumo-success: oklch(59.6% 0.145 163.225);
+    --kumo-success-tint: oklch(95% 0.052 163.051);
+    --kumo-success-text: oklch(43.2% 0.095 166.913);
+    --kumo-warning: oklch(79.5% 0.184 86.047);
+    --kumo-warning-tint: oklch(97.3% 0.071 103.193);
+    --kumo-warning-text: oklch(47.6% 0.114 61.907);
+    --kumo-danger: oklch(63.7% 0.237 25.331);
+    --kumo-danger-tint: oklch(93.6% 0.032 17.717);
+    --kumo-danger-text: oklch(50.5% 0.213 27.518);
+
+    /* elevation: a hairline ring, then a 1px drop. No soft shadows anywhere. */
+    --kumo-ring: 0 0 0 1px oklch(14.5% 0 0 / 0.1);
+    --kumo-ring-drop: 0 0 0 1px oklch(14.5% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.05);
+  }
+
+  .dark {
+    --kumo-canvas: oklch(10% 0 0);
+    --kumo-base: oklch(17% 0 0);
+    --kumo-elevated: oklch(12% 0 0);
+    --kumo-recessed: oklch(15% 0 0);
+    --kumo-tint: oklch(26.9% 0 0);
+    --kumo-fill: oklch(26.9% 0 0);
+    --kumo-fill-hover: oklch(37.1% 0 0);
+
+    --kumo-line: oklch(32% 0 0);
+    --kumo-hairline: oklch(26.9% 0 0);
+    --kumo-focus: oklch(93.5% 0 0);
+
+    --kumo-text: oklch(97% 0 0);
+    --kumo-text-strong: oklch(98.5% 0 0);
+    --kumo-text-label: oklch(70.8% 0 0);
+    --kumo-text-subtle: oklch(70.8% 0 0);
+    --kumo-text-placeholder: oklch(55.6% 0 0);
+    --kumo-text-inverse: oklch(20.5% 0 0);
+    --kumo-link: oklch(70.7% 0.165 254.624);
+
+    --kumo-info-tint: oklch(28% 0.06 255.585);
+    --kumo-info-text: oklch(80% 0.12 255.585);
+    --kumo-success-tint: oklch(26% 0.06 163.051);
+    --kumo-success-text: oklch(80% 0.12 163.051);
+    --kumo-warning-tint: oklch(28% 0.06 86.047);
+    --kumo-warning-text: oklch(85% 0.12 86.047);
+    --kumo-danger-tint: oklch(28% 0.07 17.717);
+    --kumo-danger-text: oklch(78% 0.14 25.331);
+
+    --kumo-ring: 0 0 0 1px oklch(100% 0 0 / 0.1);
+    --kumo-ring-drop: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+}
+
+/*
+ * The app's original semantic names, re-pointed at the Kumo palette.
+ *
+ * Kept as BARE oklch components (`L C H`, no wrapper) so Tailwind can inject
+ * `<alpha-value>` and every existing `bg-surface/70`, `bg-brand-soft/60`,
+ * `text-ready/30` keeps working. Without this the reskin would silently drop
+ * every opacity modifier already written in the components.
+ *
+ * These exist so the whole app inherits the new palette at once; new work
+ * reaches for the `--kumo-*` names and the shared primitives instead.
+ */
+@layer base {
+  :root {
+    --canvas: 98.75% 0 0;
+    --surface: 100% 0 0;
+    --surface-sidebar: 98% 0 0;
+    --surface-subtle: 98% 0 0;
+    --surface-raised: 100% 0 0;
+    --ink: 21% 0.006 285.885;
+    --ink-secondary: 43.9% 0 0;
+    --ink-tertiary: 55.6% 0 0;
+    --line-subtle: 93.5% 0 0;
+    --line: 87% 0 0;
+    --brand: 57.72% 0.2324 260;
+    --brand-hover: 48.8% 0.243 264.376;
+    --brand-soft: 93.2% 0.032 255.585;
+    --governed: 59.6% 0.145 163.225;
+    --governed-soft: 95% 0.052 163.051;
+    --partial: 79.5% 0.184 86.047;
+    --partial-soft: 97.3% 0.071 103.193;
+    --ready: 55.6% 0 0;
+    --ready-soft: 97% 0 0;
+    --danger: 63.7% 0.237 25.331;
+    --danger-soft: 93.6% 0.032 17.717;
+
+    /* Categorical chart ramp, kept in step with the Kumo semantics. */
+    --chart-1: oklch(57.72% 0.2324 260);
+    --chart-2: oklch(59.6% 0.145 163.225);
+    --chart-3: oklch(79.5% 0.184 86.047);
+    --chart-4: oklch(55% 0.22 300);
+    --chart-5: oklch(63.7% 0.237 25.331);
+  }
+
+  .dark {
+    --canvas: 10% 0 0;
+    --surface: 17% 0 0;
+    --surface-sidebar: 12% 0 0;
+    --surface-subtle: 15% 0 0;
+    --surface-raised: 17% 0 0;
+    --ink: 97% 0 0;
+    --ink-secondary: 70.8% 0 0;
+    --ink-tertiary: 63% 0 0;
+    --line-subtle: 26.9% 0 0;
+    --line: 32% 0 0;
+    --brand: 70% 0.17 260;
+    --brand-hover: 78% 0.15 260;
+    --brand-soft: 28% 0.06 255.585;
+    --governed: 72% 0.16 163.225;
+    --governed-soft: 26% 0.06 163.051;
+    --partial: 82% 0.15 86.047;
+    --partial-soft: 28% 0.06 86.047;
+    --ready: 63% 0 0;
+    --ready-soft: 26.9% 0 0;
+    --danger: 70% 0.19 25.331;
+    --danger-soft: 28% 0.07 17.717;
+
+    --chart-1: oklch(70% 0.17 260);
+    --chart-2: oklch(72% 0.16 163.225);
+    --chart-3: oklch(82% 0.15 86.047);
+    --chart-4: oklch(70% 0.17 300);
+    --chart-5: oklch(70% 0.19 25.331);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+@layer base {
+  body {
+    background-color: var(--kumo-canvas);
+    color: var(--kumo-text);
+    font-size: 14px;
+    line-height: 20px;
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Quiet, macOS-like scrollbars */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(55.6% 0 0 / 0.35);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(43.9% 0 0 / 0.5);
+  background-clip: content-box;
+}
+
+@keyframes liq-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.liq-pop {
+  animation: liq-pop 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Reserve the macOS traffic lights. Zero everywhere else, so `pl-traffic` is
+   always safe to apply; main.tsx raises it on darwin. Any surface that draws at
+   the window's top-left — title bar, full-screen overlay, preview chrome — must
+   carry `pl-traffic`, or the close button lands on top of its content. */
+:root {
+  --liq-traffic-inset: 1.5rem;
+}
+
+/* A button that reads as a solid, lit object rather than a painted rectangle.
+   The recipe is animations.dev's `.buy-button`, retuned from amber to black.
+   Four layers, and every one of them is doing a job:
+
+     1. a vertical gradient   the top face catches the light, the bottom is in shade
+     2. an inner rim highlight  the bevel, so the edge has thickness
+     3. an outer ring one step LIGHTER than the fill — this is the "light around
+        the edge", and it is the one that sells the solidity. On the amber
+        original the ring is a mid-tone of the fill; against black the same idea
+        means lifting it, because a darker ring would simply disappear.
+     4. a short grounding shadow  puts it on a surface instead of floating
+
+   The letterpress on the label (a 1px shadow under the glyphs) is the last 5%:
+   without it the text sits on top of the object, with it the text is part of it.
+
+   The three tones are custom properties so a variant only restates the palette,
+   never the recipe. `--liq-lift` differs per variant on purpose: a black surface
+   needs far more brightness to register a hover than a saturated blue does. */
+.liq-solid {
+  --liq-top: oklch(33% 0 0);
+  --liq-bottom: oklch(16% 0 0);
+  --liq-ring: oklch(30% 0 0);
+  --liq-lift: 1.28;
+
+  background: linear-gradient(var(--liq-top) 0%, var(--liq-bottom) 100%);
+  color: #fff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.35);
+  box-shadow:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.2),
+    inset 0 0 1px 1px rgb(255 255 255 / 0.07),
+    0 0 0 1px var(--liq-ring),
+    0 2px 3px rgb(0 0 0 / 0.18);
+  transition:
+    filter 200ms,
+    transform 80ms,
+    box-shadow 80ms;
+}
+
+/* The brand variant. Same object, different light. */
+.liq-solid-brand {
+  --liq-top: oklch(64% 0.185 259);
+  --liq-bottom: oklch(51% 0.235 263);
+  --liq-ring: oklch(55% 0.22 261);
+  --liq-lift: 1.08;
+}
+
+.liq-solid:hover:not(:disabled) {
+  filter: brightness(var(--liq-lift));
+}
+
+/* The press. `.group:active` covers the case where the button is a span inside a
+   larger clickable surface (the drop zone), `:active` the ordinary case. Losing
+   a shadow layer as it sinks is what makes the travel feel physical. */
+.liq-solid:active:not(:disabled),
+.group:active .liq-solid {
+  transform: translateY(1px);
+  filter: brightness(0.92);
+  box-shadow:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.1),
+    0 0 0 1px var(--liq-ring);
+}
+
+/* A disabled control must not look pressable, so it drops the whole treatment
+   rather than dimming it: flat fill, no bevel, no ring, no shadow. */
+.liq-solid:disabled {
+  background: var(--kumo-fill);
+  color: var(--kumo-text-placeholder);
+  text-shadow: none;
+  box-shadow: none;
+  cursor: default;
+}
+
+/* The band crossing the pixel field. One transform-only animation on one
+   element per side, so the whole texture animates on the compositor. */
+@keyframes liq-sweep {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 0.3;
+  }
+  to {
+    transform: translateY(250%);
+    opacity: 0;
+  }
+}
+.liq-sweep {
+  animation: liq-sweep 14s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  will-change: transform;
+}
+/* Dragging a file over the drop zone brings the band forward. Restrained on
+   purpose: it acknowledges the drag, it does not celebrate it. `data-awake`
+   rather than :hover, because :hover does not fire during an HTML5 drag. */
+[data-awake='true'] .liq-sweep {
+  animation-duration: 5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 80ms !important;
+  }
+}
