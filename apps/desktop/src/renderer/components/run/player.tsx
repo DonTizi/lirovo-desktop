@@ -1,5 +1,5 @@
 import { Film } from "lucide-react";
-import type { RunArtifacts } from "../../../main/ipc.js";
+import type { RunArtifacts } from "../../../bridge/contract.js";
 import { formatTime, type Lens } from "./lens";
 import { cn } from "../../lib/cn";
 

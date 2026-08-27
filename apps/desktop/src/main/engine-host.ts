@@ -57,10 +57,7 @@ import type {
   ValueRow,
 } from "./ipc.js";
 import { mediaUrl } from "./media-protocol.js";
-import type { z } from "zod";
-import type { saveSchemaRequestSchema } from "./ipc.js";
-
-type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
+import type { EngineMessage, EngineRequest } from "./engine-protocol.js";
 
 /**
  * The engine, in its own process.
@@ -73,32 +70,7 @@ type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
  * property rather than a slogan.
  */
 
-type Inbound =
-  | { id: string; type: "extract"; request: ExtractRequest }
-  | { id: string; type: "cancel" }
-  | { id: string; type: "doctor" }
-  | { id: string; type: "listRuns" }
-  | { id: string; type: "runDetail"; runId: string }
-  | { id: string; type: "inspect"; source: string }
-  | { id: string; type: "listSchemas" }
-  | { id: string; type: "saveSchema"; input: SaveSchemaRequest }
-  | { id: string; type: "schemaRevisions"; schemaId: string }
-  | { id: string; type: "archiveSchema"; schemaId: string }
-  | { id: string; type: "runArtifacts"; runId: string }
-  | { id: string; type: "install"; what: "whisper-model" | "yt-dlp"; model?: string }
-  | { id: string; type: "storage" }
-  | { id: string; type: "purge"; what: "runs" | "everything" }
-  | { id: string; type: "preferences" }
-  | { id: string; type: "setUpdateChannel"; channel: "latest" | "beta" }
-  | { id: string; type: "setDefaultBackend"; backendId: string | null };
-
-type Outbound =
-  | { kind: "event"; event: PipelineEvent }
-  | { kind: "install-progress"; progress: { what: string; received: number; total: number | null } }
-  | { kind: "result"; id: string; value: unknown }
-  | { kind: "error"; id: string; error: { code: string; message: string } };
-
-const send = (message: Outbound): void => {
+const send = (message: EngineMessage): void => {
   process.parentPort.postMessage(message);
 };
 
@@ -560,7 +532,7 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
   }
 };
 
-const handle = async (message: Inbound): Promise<unknown> => {
+const handle = async (message: EngineRequest): Promise<unknown> => {
   switch (message.type) {
     case "extract":
       return extract(message.request);
@@ -605,7 +577,7 @@ const handle = async (message: Inbound): Promise<unknown> => {
 };
 
 process.parentPort.on("message", (wrapper) => {
-  const message = wrapper.data as Inbound;
+  const message = wrapper.data as EngineRequest;
   handle(message)
     .then((value) => send({ kind: "result", id: message.id, value }))
     .catch((error: unknown) => {

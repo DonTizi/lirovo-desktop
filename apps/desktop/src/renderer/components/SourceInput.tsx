@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Clapperboard, FileVideo, Link2, Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { SourceInspection } from "../../main/ipc.js";
+import type { SourceInspection } from "../../bridge/contract.js";
 import { cn } from "../lib/cn";
 import { PixelField } from "./PixelField";
 

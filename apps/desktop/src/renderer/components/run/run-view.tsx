@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import type { Stage } from "@lirovo/contracts";
-import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
+import type { RunArtifacts, RunDetail, ValueRow } from "../../../bridge/contract.js";
 import { RunProgress, type LiveStage } from "../RunProgress";
 import { Card, CardHeader, Skeleton } from "../primitives";
 import { cn } from "../../lib/cn";

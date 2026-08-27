@@ -1,6 +1,6 @@
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, Loader2, TriangleAlert } from "lucide-react";
 import { STAGES, type Stage } from "@lirovo/contracts";
-import type { StageAttempt } from "../../main/ipc.js";
+import type { StageAttempt } from "../../bridge/contract.js";
 import { Card, CardHeader } from "./primitives";
 import { cn } from "../lib/cn";
 

@@ -14,7 +14,8 @@ import {
 } from "lucide-react";
 import type { Fix } from "@lirovo/contracts";
 import { DEFAULT_WHISPER_MODEL_ID, WHISPER_MODELS } from "@lirovo/core";
-import type { Preferences, StorageReport, UpdateState } from "../../main/ipc.js";
+import type { Preferences, UpdateState } from "../../bridge/contract.js";
+import type { StorageReport } from "../../bridge/contract.js";
 import { Hero } from "./hero";
 import { Mark } from "./logos";
 import { Skeleton } from "./primitives";

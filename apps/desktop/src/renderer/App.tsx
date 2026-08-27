@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
 import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
-import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
+import type { RunDetail, RunSummary, ValueRow } from "../bridge/contract.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
 import { ListColumn, type ListEntry } from "./components/primitives";

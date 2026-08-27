@@ -1,16 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/channels.js";
-import type {
-  ExtractRequest,
-  InstallOutcome,
-  Preferences,
-  RunArtifacts,
-  RunDetail,
-  RunSummary,
-  SourceInspection,
-  StorageReport,
-  UpdateState,
-} from "../main/ipc.js";
+import type { InstallOutcome, Preferences, RunArtifacts, RunDetail, RunSummary, SourceInspection, UpdateState } from "../bridge/contract.js";
+import type { ExtractRequest, StorageReport } from "../bridge/contract.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 

@@ -19,6 +19,7 @@ import {
 
 import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
 import { checkNow, currentVersion, downloadUpdate, installUpdate, setChannel, startUpdater, type UpdateChannel } from "./updater.js";
+import type { EngineMessage } from "./engine-protocol.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,11 +43,7 @@ const startEngine = (): UtilityProcess => {
   const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], { stdio: "inherit" });
 
   child.on("message", (message: unknown) => {
-    const msg = message as
-      | { kind: "event"; event: unknown }
-      | { kind: "install-progress"; progress: unknown }
-      | { kind: "result"; id: string; value: unknown }
-      | { kind: "error"; id: string; error: { code: string; message: string } };
+    const msg = message as EngineMessage;
 
     // Both are pushes, not answers: neither carries a request id, so neither
     // can be looked up in `pending`.

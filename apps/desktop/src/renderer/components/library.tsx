@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { AlertTriangle, FileVideo, Link2 } from "lucide-react";
-import type { RunSummary } from "../../main/ipc.js";
+import type { RunSummary } from "../../bridge/contract.js";
 import { Hero } from "./hero";
 import { ColumnPicker, StationTable, useColumns } from "./station-table";
 import type { TableColumn } from "./station-table";

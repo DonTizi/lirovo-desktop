@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ListMusic } from "lucide-react";
 import { cueAt, toParagraphs } from "@lirovo/core";
-import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
+import type { RunArtifacts, RunDetail, ValueRow } from "../../../bridge/contract.js";
 import { Card, CardHeader, Mono, StateLabel } from "../primitives";
 import { ColumnPicker, StationTable, useColumns, type TableColumn } from "../station-table";
 import { useScrollMask } from "../../lib/useScrollMask";
