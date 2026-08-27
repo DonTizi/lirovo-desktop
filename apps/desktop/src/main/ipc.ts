@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { pipelineEventSchema } from "@lirovo/contracts";
+import type { ExtractRequest } from "../bridge/contract.js";
 
 /**
  * Everything that crosses the bridge, validated on the way in.
@@ -15,7 +16,16 @@ export const extractRequestSchema = z.object({
   /** Which stored revision this run was asked with, when it came from one. */
   schemaRevisionId: z.string().nullable().optional(),
 });
-export type ExtractRequest = z.infer<typeof extractRequestSchema>;
+/**
+ * The validator and the contract must describe the same request.
+ *
+ * `ExtractRequest` is declared in the bridge so the preload can import it
+ * without pulling zod in behind it. This assignment is the proof that the
+ * schema above still matches it: add a field to one and not the other and
+ * this line stops compiling.
+ */
+const _schemaMatchesContract: ExtractRequest = {} as z.infer<typeof extractRequestSchema>;
+void _schemaMatchesContract;
 
 export const runIdSchema = z.object({ runId: z.string().min(1) });
 
@@ -37,73 +47,51 @@ export const saveSchemaRequestSchema = z.object({
 
 export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
-export interface SourceInspection {
-  readonly kind: "url" | "file";
-  /** youtube | vimeo | loom | url, or the file extension. */
-  readonly label: string;
-  readonly title: string | null;
-  readonly durationS: number | null;
-  readonly bytes: number | null;
-  /** Why it cannot be used, if it cannot. */
-  readonly problem: string | null;
-}
+/** Null clears the choice and returns the app to picking the first available. */
+export const updateChannelSchema = z.object({ channel: z.enum(["latest", "beta"]) });
+
+/**
+ * The renderer telling the main process whether a run is in flight.
+ *
+ * The main process cannot see the engine's state, and the one question it must
+ * answer instantly — may I quit and install? — depends on it.
+ */
+export const busySchema = z.object({ busy: z.boolean() });
+
+/** What a purge is allowed to remove. Named, never a free path. */
+export const purgeSchema = z.object({ what: z.enum(["runs", "everything"]) });
+export const revealSchema = z.object({ path: z.string().min(1) });
+
+
+
+/** Which of the two fetchable dependencies to install. */
+export const installSchema = z.object({
+  what: z.enum(["whisper-model", "yt-dlp"]),
+  /** Which speech model. Ignored for anything else. */
+  model: z.string().optional(),
+});
+
+export const defaultBackendSchema = z.object({ backendId: z.string().min(1).nullable() });
 
 /** What the engine process sends back. Same union the CLI renders. */
-export const engineMessageSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("event"), event: pipelineEventSchema }),
-  z.object({ kind: z.literal("done"), runId: z.string(), summary: z.unknown() }),
-  z.object({
-    kind: z.literal("failed"),
-    runId: z.string(),
-    error: z.object({ code: z.string(), message: z.string() }),
-  }),
-]);
-export type EngineMessage = z.infer<typeof engineMessageSchema>;
+export { CHANNELS } from "./channels.js";
 
-export const CHANNELS = {
-  doctor: "lirovo:doctor",
-  extract: "lirovo:extract",
-  cancel: "lirovo:cancel",
-  runDetail: "lirovo:run-detail",
-  listRuns: "lirovo:list-runs",
-  pickFile: "lirovo:pick-file",
-  inspect: "lirovo:inspect",
-  listSchemas: "lirovo:list-schemas",
-  saveSchema: "lirovo:save-schema",
-  schemaRevisions: "lirovo:schema-revisions",
-  archiveSchema: "lirovo:archive-schema",
-  engineEvent: "lirovo:engine-event",
-} as const;
+/**
+ * Re-exported so main-side code has one import for the whole IPC surface. The
+ * shapes themselves live in `../bridge/contract.js`, which the renderer and
+ * the preload import directly rather than reaching in here.
+ */
+export type {
+  ExtractRequest,
+  InstallOutcome,
+  Preferences,
+  RunArtifacts,
+  RunDetail,
+  RunSummary,
+  SourceInspection,
+  StageAttempt,
+  StorageReport,
+  UpdateState,
+  ValueRow,
+} from "../bridge/contract.js";
 
-/** One extracted value and the moments that prove it. */
-export interface ValueRow {
-  readonly observationId: string;
-  readonly fieldPath: string;
-  readonly value: string;
-  readonly reviewPriority: number;
-  readonly evidence: readonly {
-    readonly sourceRef: string;
-    readonly modality: string;
-    readonly tStart: number;
-    readonly tEnd: number;
-    readonly quote: string | null;
-  }[];
-}
-
-export interface RunDetail {
-  readonly runId: string;
-  readonly status: string;
-  readonly title: string | null;
-  readonly durationS: number | null;
-  readonly sourcePath: string | null;
-  readonly transcriptEngine: string | null;
-  readonly values: readonly ValueRow[];
-}
-
-export interface RunSummary {
-  readonly runId: string;
-  readonly status: string;
-  readonly title: string | null;
-  readonly createdAt: number;
-  readonly valueCount: number;
-}

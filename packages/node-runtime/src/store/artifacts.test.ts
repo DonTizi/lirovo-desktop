@@ -50,3 +50,25 @@ describe("createFsArtifactStore", () => {
     expect(await store.exists("run_a", "one.bin")).toBe(false);
   });
 });
+
+describe("a run id is a directory name", () => {
+  it("refuses anything that is not one", async () => {
+    // The id reaches here from an IPC payload that was only `z.string().min(1)`,
+    // and it is joined straight into a path. A renderer that got compromised
+    // should not be able to walk out of `runs/`.
+    const store = createFsArtifactStore("/tmp/lirovo-artifacts-test");
+    for (const bad of ["../../etc", "run_../..", "", "RUN_ABC", "run_abc/../..", "..", "run_ab!c"]) {
+      expect(() => store.resolve(bad, "frames/manifest.json")).toThrow(/not a run id/);
+    }
+  });
+
+  it("accepts what makeId actually produces", () => {
+    const store = createFsArtifactStore("/tmp/lirovo-artifacts-test");
+    expect(() => store.resolve("run_brgknpfxd34rz094", "graph/kg.json")).not.toThrow();
+  });
+
+  it("refuses a relative path that climbs out of the run", () => {
+    const store = createFsArtifactStore("/tmp/lirovo-artifacts-test");
+    expect(() => store.resolve("run_abc123", "../../../etc/passwd")).toThrow(/escapes the run directory/);
+  });
+});

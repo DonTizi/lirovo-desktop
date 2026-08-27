@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
 import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
-import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
+import type { RunDetail, RunSummary, ValueRow } from "../bridge/contract.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
-import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
+import { ListColumn, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
+import { RunProgress, type LiveStage } from "./components/RunProgress";
+import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
+import { Hero } from "./components/hero";
+import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
+import { SettingsPage } from "./components/SettingsPage";
+import { UpdateToast } from "./components/UpdateToast";
+import { SystemPanel, type SystemReport } from "./components/SystemPanel";
 import { cn } from "./lib/cn";
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -27,87 +34,63 @@ interface StageState {
  * stops believing the rest of the screen.
  */
 const useStages = (): {
-  stages: Map<Stage, StageState>;
-  reset: () => void;
+  byRun: Map<string, Map<Stage, LiveStage>>;
+  reset: (runId: string) => void;
   apply: (event: PipelineEvent) => void;
 } => {
-  const [stages, setStages] = useState<Map<Stage, StageState>>(new Map());
+  const [byRun, setByRun] = useState<Map<string, Map<Stage, LiveStage>>>(new Map());
 
-  const reset = useCallback(() => setStages(new Map()), []);
+  const reset = useCallback((runId: string) => {
+    setByRun((current) => {
+      const next = new Map(current);
+      next.delete(runId);
+      return next;
+    });
+  }, []);
 
   const apply = useCallback((event: PipelineEvent) => {
-    setStages((current) => {
+    setByRun((current) => {
       const next = new Map(current);
+      // Keyed by run, because two tabs can be open on two runs and a single
+      // map would paint one run's vision progress onto the other's row.
+      const mine = new Map(next.get(event.runId) ?? []);
+      const set = (stage: Stage, state: LiveStage): void => {
+        mine.set(stage, state);
+      };
       switch (event.type) {
         case "stage:start":
-          next.set(event.stage, { state: "active", meta: event.attempt > 1 ? `attempt ${event.attempt}` : "" });
+          set(event.stage, { state: "active", meta: event.attempt > 1 ? `attempt ${event.attempt}` : "" });
           break;
         case "stage:resumed":
-          next.set(event.stage, { state: "done", meta: "resumed" });
+          set(event.stage, { state: "done", meta: "resumed" });
           break;
         case "stage:skipped":
-          next.set(event.stage, { state: "skipped", meta: event.why });
+          set(event.stage, { state: "skipped", meta: event.why });
           break;
         case "stage:progress":
-          next.set(event.stage, {
+          set(event.stage, {
             state: "active",
             meta: `${event.done}/${event.total}${event.note === undefined ? "" : ` ${event.note}`}`,
           });
           break;
         case "stage:done":
-          next.set(event.stage, { state: "done", meta: `${(event.ms / 1000).toFixed(1)}s` });
+          set(event.stage, { state: "done", meta: `${(event.ms / 1000).toFixed(1)}s` });
           break;
         case "stage:degraded":
-          next.set(event.stage, { state: "failed", meta: event.message.slice(0, 70) });
+          set(event.stage, { state: "failed", meta: event.message });
           break;
         case "run:failed":
-          if (event.stage !== null) next.set(event.stage, { state: "failed", meta: event.code });
+          if (event.stage !== null) set(event.stage, { state: "failed", meta: event.code });
           break;
         default:
           break;
       }
+      next.set(event.runId, mine);
       return next;
     });
   }, []);
 
-  return { stages, reset, apply };
-};
-
-const StageRow = ({ stage, state }: { stage: Stage; state: StageState | undefined }): JSX.Element => {
-  const kind = state?.state ?? "waiting";
-  // A skipped stage gets its own mark. Leaving it as a pending circle reads as
-  // "still to come" and never resolves, which is the one state that makes a
-  // finished run look stuck.
-  const Icon =
-    kind === "done"
-      ? CircleCheck
-      : kind === "failed"
-        ? CircleX
-        : kind === "skipped"
-          ? CircleSlash
-          : kind === "active"
-            ? Loader2
-            : CircleDashed;
-  return (
-    <div
-      className={cn(
-        "border-hairline flex items-center gap-2.5 border-b px-4 py-2 last:border-b-0",
-        (kind === "waiting" || kind === "skipped") && "opacity-55",
-      )}
-    >
-      <Icon
-        size={15}
-        className={cn(
-          kind === "done" && "text-success",
-          kind === "failed" && "text-danger",
-          kind === "active" && "text-brand animate-spin",
-          (kind === "waiting" || kind === "skipped") && "text-ink-subtle",
-        )}
-      />
-      <span className={cn("flex-1", kind === "active" ? "text-ink-strong font-medium" : "text-ink-label")}>{stage}</span>
-      <span className="text-ink-subtle tabular-nums text-xs">{state?.meta ?? ""}</span>
-    </div>
-  );
+  return { byRun, reset, apply };
 };
 
 export const App = (): JSX.Element => {
@@ -124,47 +107,94 @@ export const App = (): JSX.Element => {
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [open, setOpen] = useState<Map<string, RunDetail>>(new Map());
-  const [ready, setReady] = useState<{ ok: boolean; note: string; dataDir: string | null } | null>(null);
-  const { stages, reset, apply } = useStages();
-  const video = useRef<HTMLVideoElement>(null);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [openTabs, setOpen] = useState<Map<string, RunDetail>>(new Map());
+  const [system, setSystem] = useState<SystemReport | null>(null);
+  const [dataDir, setDataDir] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
+  const { byRun, reset, apply } = useStages();
+  // The run this window is executing, so its tab can show it live.
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
-  useEffect(() => window.lirovo.onEngineEvent((e) => apply(e as PipelineEvent)), [apply]);
+  // The main process decides whether it may quit and install, and it cannot
+  // see the engine's state. It is told here, whenever the answer changes —
+  // without this the guard is dead and "Restart now" ends a running
+  // extraction.
+  useEffect(() => {
+    void window.lirovo.busy(running);
+  }, [running]);
 
   const loadRuns = useCallback(async () => {
     const answer = await window.lirovo.listRuns();
-    if (answer.ok) setRuns(answer.value);
+    if (answer.ok) {
+      setRuns(answer.value);
+      setRunsError(null);
+      return;
+    }
+    // Never silent. A query that throws used to render as "Nothing extracted
+    // yet", which is the same picture as a working app with no runs — and the
+    // one state where the user has no reason to suspect anything is wrong.
+    setRunsError(`${answer.error.code}: ${answer.error.message}`);
   }, []);
+
+  useEffect(
+    () =>
+      window.lirovo.onEngineEvent((e) => {
+        const event = e as PipelineEvent;
+        apply(event);
+        // The id is only knowable from the stream: `extract` does not answer
+        // until the run is over, and the progress has to be watchable before
+        // that. `run:start` is the first thing the engine sends.
+        if (event.type === "run:start") {
+          reset(event.runId);
+          setActiveRunId(event.runId);
+        }
+        if (event.type === "run:done" || event.type === "run:failed" || event.type === "run:cancelled") {
+          void loadRuns();
+        }
+      }),
+    [apply, reset, loadRuns],
+  );
 
   // Asking the engine what this machine can do is also the first proof that the
   // engine process started and that the bridge works. If either is wrong the
   // user learns it here, not after picking a two-hour video.
+  const check = useCallback(async () => {
+    setChecking(true);
+    const answer = await window.lirovo.doctor();
+    setChecking(false);
+    if (!answer.ok) {
+      setBridgeError(`${answer.error.code}: ${answer.error.message}`);
+      return;
+    }
+    const report = answer.value as SystemReport & { paths: { data: string } };
+    setBridgeError(null);
+    setSystem(report);
+    setDataDir(report.paths.data);
+  }, []);
+
   useEffect(() => {
-    void window.lirovo.doctor().then((answer) => {
-      if (!answer.ok) {
-        setReady({ ok: false, note: `${answer.error.code}: ${answer.error.message}`, dataDir: null });
-        return;
-      }
-      const report = answer.value as {
-        ok: boolean;
-        problems: string[];
-        paths: { data: string };
-        backends: { id: string; available: boolean }[];
-      };
-      const usable = report.backends.filter((b) => b.available).map((b) => b.id);
-      setReady({
-        ok: report.ok,
-        note: report.ok ? (usable.length === 0 ? "no backend" : usable.join(", ")) : (report.problems[0] ?? "not ready"),
-        dataDir: report.paths.data,
-      });
-    });
+    void check();
     void loadRuns();
-  }, [loadRuns]);
+  }, [check, loadRuns]);
+
+  /** Painted immediately, then confirmed: a click that waits on a round trip
+   *  before the check moves reads as broken. */
+  const chooseBackend = (backendId: string): void => {
+    setSystem((current) => (current === null ? current : { ...current, defaultBackendId: backendId }));
+    void window.lirovo.setDefaultBackend(backendId).then((answer) => {
+      if (!answer.ok) return;
+      setSystem((current) =>
+        current === null ? current : { ...current, defaultBackendId: answer.value.defaultBackendId },
+      );
+    });
+  };
 
   const start = async (): Promise<void> => {
     if (source.trim() === "") return;
     setError(null);
-    reset();
+    setActiveRunId(null);
     setRunning(true);
     setTab("overview");
 
@@ -185,6 +215,23 @@ export const App = (): JSX.Element => {
     await openRun((answer.value as { runId: string }).runId);
   };
 
+  // Anything unfinished keeps refreshing. Without this a run only updates when
+  // the user clicks something, which is exactly when it looks stuck.
+  const watching = running || runs.some((r) => r.status === "running" || r.status === "claimed");
+  useEffect(() => {
+    if (!watching) return;
+    const timer = window.setInterval(() => {
+      void loadRuns();
+      const open = [...openTabs.keys()];
+      for (const runId of open) {
+        void window.lirovo.runDetail(runId).then((got) => {
+          if (got.ok && got.value !== null) setOpen((m) => new Map(m).set(runId, got.value as RunDetail));
+        });
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [watching, loadRuns, openTabs]);
+
   const openRun = async (runId: string): Promise<void> => {
     const got = await window.lirovo.runDetail(runId);
     if (got.ok && got.value !== null) {
@@ -201,14 +248,7 @@ export const App = (): JSX.Element => {
     if (file !== undefined) setSource(window.lirovo.pathForFile(file));
   };
 
-  const seek = (t: number): void => {
-    const el = video.current;
-    if (el === null) return;
-    el.currentTime = t;
-    void el.play();
-  };
-
-  const detail = open.get(tab) ?? null;
+  const detail = openTabs.get(tab) ?? null;
   const values = useMemo(() => {
     if (detail === null) return [];
     const needle = query.trim().toLowerCase();
@@ -222,9 +262,6 @@ export const App = (): JSX.Element => {
     );
   }, [detail, query]);
   const grounded = values.filter((v) => v.evidence.length > 0).length;
-
-  const succeeded = runs.filter((r) => r.status === "succeeded").length;
-  const totalValues = runs.reduce((n, r) => n + r.valueCount, 0);
 
   const runEntries: ListEntry[] = runs.map((r) => ({
     id: r.runId,
@@ -241,7 +278,12 @@ export const App = (): JSX.Element => {
     .map((r) => ({
       id: r.runId,
       label: r.title ?? r.runId,
-      hint: r.status === "succeeded" ? "nothing was extracted" : `run ${r.status}`,
+      hint:
+        r.status === "succeeded"
+          ? "nothing was extracted"
+          : r.status === "stopped"
+            ? "nothing is working on this"
+            : `run ${r.status}`,
       meta: String(r.valueCount),
       icon: ShieldAlert,
     }));
@@ -254,12 +296,19 @@ export const App = (): JSX.Element => {
     icon: History,
   }));
 
+  // System earns a tab of its own. It was only at the foot of Overview, under
+  // the hero, the field and the schema picker — so on the one machine it
+  // exists for, the machine where nothing works yet, the page that says what
+  // is missing was the last thing on the page.
+  const attention =
+    system === null ? 0 : (system.ok ? 0 : system.problems.length) + system.warnings.length;
   const sections: NavTab[] = [
     { id: "overview", label: "Overview" },
     { id: "library", label: "Library", count: runs.length },
     { id: "schemas", label: "Schemas" },
+    { id: "settings", label: "Settings", ...(attention > 0 ? { count: attention } : {}) },
   ];
-  const runTabs: NavTab[] = [...open.values()].map((r) => ({
+  const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
     id: r.runId,
     label: r.title ?? r.runId,
     closable: true,
@@ -289,19 +338,30 @@ export const App = (): JSX.Element => {
             return next;
           })
         }
-        onOpenSettings={() => setTab("overview")}
-        dataDir={ready?.dataDir ?? null}
+        onOpenSettings={() => setTab("settings")}
+        dataDir={dataDir}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* `overflow-x-clip`, not `auto`: the hero's pixel field is a viewport-wide
+          element hung outside the title so the texture bleeds to the edges of
+          the content column. Without the clip that width becomes scrollable
+          and the whole window slides sideways into empty space. */}
+      <UpdateToast />
+
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
         <div className="mx-auto max-w-6xl px-6 py-10">
           {tab === "overview" && (
             <>
-              {ready !== null && !ready.ok && (
-                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">{ready.note}</p>
+              {/* The blocking reason belongs ABOVE the field, not only in the
+                  panel below: a user who drops a two-hour video and learns
+                  afterwards that ffmpeg is missing has already spent the wait. */}
+              {(bridgeError ?? (system !== null && !system.ok ? (system.problems[0] ?? null) : null)) !== null && (
+                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">
+                  {bridgeError ?? system?.problems[0]}
+                </p>
               )}
 
-              <h1 className="text-ink-strong text-center text-4xl font-semibold tracking-tight">Lirovo</h1>
+              <Hero title="Lirovo" sub="Drop a link or a file. Every value comes back with the moment that proves it." />
 
               <div className="relative mx-auto mt-7 max-w-3xl">
                 <SourceInput
@@ -321,7 +381,7 @@ export const App = (): JSX.Element => {
                     is what makes it read as the same thing continuing rather
                     than a second thing appearing. */}
                 <AnimatePresence>
-                  {(running || stages.size > 0) && (
+                  {(running || activeRunId !== null) && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -329,14 +389,13 @@ export const App = (): JSX.Element => {
                       transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
                       className="overflow-hidden"
                     >
-                      <Card className="mt-2">
-                        <CardHeader title="Progress" action={running ? "running" : "finished"} />
-                        <div>
-                          {STAGES.map((stage) => (
-                            <StageRow key={stage} stage={stage} state={stages.get(stage)} />
-                          ))}
-                        </div>
-                      </Card>
+                      <div className="mt-2">
+                        <RunProgress
+                          status={running ? "running" : "finished"}
+                          live={byRun.get(activeRunId ?? "") ?? new Map()}
+                          attempts={[]}
+                        />
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -374,15 +433,13 @@ export const App = (): JSX.Element => {
                 />
               </div>
 
-              <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <StatTile label="Runs" value={String(runs.length)} />
-                <StatTile
-                  label="Succeeded"
-                  value={String(succeeded)}
-                  hint={runs.length > 0 ? `${Math.round((succeeded / runs.length) * 100)} % of runs` : undefined}
+              <div className="mt-8">
+                <SystemPanel
+                  report={system}
+                  onRecheck={() => void check()}
+                  onChooseBackend={chooseBackend}
+                  checking={checking}
                 />
-                <StatTile label="Values" value={String(totalValues)} />
-                <StatTile label="Backends" value={ready?.note ?? "…"} hint="detected on this machine" />
               </div>
 
               <div className="mt-10 grid gap-8 lg:grid-cols-3">
@@ -415,121 +472,26 @@ export const App = (): JSX.Element => {
 
           {tab === "schemas" && <SchemasPage />}
 
+          {tab === "settings" && (
+            <SettingsPage
+              report={system}
+              onRecheck={() => void check()}
+              onChooseBackend={chooseBackend}
+              checking={checking}
+            />
+          )}
+
           {tab === "library" && (
-            <Card>
-              <CardHeader title="Runs" action={`${runs.length} recorded`} />
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-hairline border-b">
-                    <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                      Source
-                    </th>
-                    <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                      Status
-                    </th>
-                    <th className="text-ink-label px-4 py-2 text-right text-xs font-medium uppercase tracking-wide">
-                      Values
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-ink-subtle px-4 py-8 text-center">
-                        Nothing extracted yet.
-                      </td>
-                    </tr>
-                  )}
-                  {runs.map((r) => (
-                    <tr
-                      key={r.runId}
-                      className="border-hairline hover:bg-elevated cursor-pointer border-b last:border-b-0"
-                      onClick={() => void openRun(r.runId)}
-                    >
-                      <td className="text-ink-strong px-4 py-2.5">{r.title ?? <Mono>{r.runId}</Mono>}</td>
-                      <td className="px-4 py-2.5">
-                        {r.status === "succeeded" ? (
-                          <Badge tone="success">succeeded</Badge>
-                        ) : r.status === "failed" ? (
-                          <Badge tone="danger">failed</Badge>
-                        ) : (
-                          <StateLabel>{r.status}</StateLabel>
-                        )}
-                      </td>
-                      <td className="text-ink-label px-4 py-2.5 text-right tabular-nums">{r.valueCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
+            <Library
+              runs={runs}
+              loading={runs.length === 0 && system === null && runsError === null}
+              error={runsError}
+              onOpen={(id) => void openRun(id)}
+            />
           )}
 
           {detail !== null && (
-            <>
-              {detail.sourcePath !== null && !/^https?:/i.test(detail.sourcePath) && (
-                <Card className="overflow-hidden">
-                  <video ref={video} controls src={`file://${detail.sourcePath}`} className="w-full bg-black" />
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader
-                  title={detail.title ?? "Result"}
-                  action={
-                    <span>
-                      {grounded} of {values.length} grounded
-                      {detail.transcriptEngine !== null ? ` · ${detail.transcriptEngine}` : ""}
-                    </span>
-                  }
-                />
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-hairline border-b">
-                      <th className="text-ink-label w-[26%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Field
-                      </th>
-                      <th className="text-ink-label w-[34%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Value
-                      </th>
-                      <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Proven at
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {values.map((row: ValueRow) => (
-                      <tr key={row.observationId} className="border-hairline hover:bg-elevated border-b last:border-b-0">
-                        <td className="px-4 py-2.5 align-top">
-                          <Mono>{row.fieldPath}</Mono>
-                        </td>
-                        <td className="text-ink-strong px-4 py-2.5 align-top">{row.value.replace(/^"|"$/g, "")}</td>
-                        <td className="px-4 py-2.5 align-top">
-                          {row.evidence.length === 0 ? (
-                            <StateLabel>nothing backs this</StateLabel>
-                          ) : (
-                            row.evidence.map((e, i) => (
-                              <button
-                                key={`${row.observationId}-${i}`}
-                                className={cn(
-                                  "mb-1 mr-1.5 inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono text-xs transition-colors",
-                                  e.modality === "visual"
-                                    ? "bg-warning-tint text-warning-text hover:brightness-95"
-                                    : "bg-info-tint text-info-text hover:brightness-95",
-                                )}
-                                title={e.quote ?? e.sourceRef}
-                                onClick={() => seek(e.tStart)}
-                              >
-                                {clock(e.tStart)}
-                              </button>
-                            ))
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </Card>
-            </>
+            <RunView detail={detail} values={values} live={byRun.get(detail.runId) ?? new Map()} />
           )}
         </div>
       </div>

@@ -50,7 +50,10 @@ export const parseProbe = (json: string): ProbeResult => {
 
 export const probeMedia = async (exec: Exec, ffprobePath: string, mediaPath: string): Promise<ProbeResult> => {
   const { stdout } = await exec(ffprobePath, [
-    "-v", "quiet",
+    // `error`, not `quiet`: when ffprobe refuses a file the reason is on
+    // stderr ("moov atom not found", "Invalid data found"), and silencing it
+    // leaves the caller holding an exit code and an empty JSON object.
+    "-v", "error",
     "-print_format", "json",
     "-show_format",
     "-show_streams",

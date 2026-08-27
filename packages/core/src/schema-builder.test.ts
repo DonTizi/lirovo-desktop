@@ -7,6 +7,7 @@ import {
   toPropertyName,
   type FieldSpec,
 } from "./schema-builder.js";
+import { sha256FromSumsFile } from "./installables.js";
 
 describe("toPropertyName", () => {
   it("turns what a person types into something a schema can key on", () => {
@@ -151,5 +152,26 @@ describe("fieldsFingerprint", () => {
     const a: FieldSpec[] = [{ name: "a:text:x", kind: "text" }];
     const b: FieldSpec[] = [{ name: "a", kind: "text", description: "x" }];
     expect(fieldsFingerprint(a)).not.toBe(fieldsFingerprint(b));
+  });
+});
+
+describe("sha256FromSumsFile", () => {
+  it("finds the line for the file it was asked about", () => {
+    const sums = [
+      "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202  yt-dlp_macos",
+      "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  yt-dlp",
+    ].join("\n");
+    expect(sha256FromSumsFile(sums, "yt-dlp_macos")).toBe(
+      "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+    );
+  });
+
+  it("does not match a name by prefix, which would install the wrong artifact", () => {
+    const sums = "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  yt-dlp";
+    expect(sha256FromSumsFile(sums, "yt-dlp_macos")).toBeNull();
+  });
+
+  it("returns null rather than guessing when the file is not listed", () => {
+    expect(sha256FromSumsFile("nothing useful here", "yt-dlp_macos")).toBeNull();
   });
 });

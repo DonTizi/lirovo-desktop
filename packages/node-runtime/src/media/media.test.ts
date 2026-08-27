@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { resolveBinary } from "../binaries.js";
 import {
   buildFilterChain,
   defaultThresholdFor,
   isEmptySelection,
   parseShowInfo,
   summarizeFfmpegFailure,
+  LEGACY_RATE_FLAG,
+  RATE_FLAG,
+  buildSceneDetectArgs,
+  rejectsOption,
 } from "./scene-detect.js";
 import { parseProbe } from "./probe.js";
 import { isPartialDownload, isUrl, parseYtDlpPrints, sourceTypeOf } from "./ingest.js";
@@ -295,5 +303,88 @@ describe("explainYtDlpError", () => {
 
   it("passes an unrecognised failure through rather than inventing a cause", () => {
     expect(explainYtDlpError("something nobody has seen")).toBe("something nobody has seen");
+  });
+});
+
+describe("ffmpeg rate flag", () => {
+  it("uses the flag ffmpeg 9 actually accepts", () => {
+    // Reproduced against ffmpeg 9.0.1: `-vsync vfr` exits with
+    // "Unrecognized option 'vsync' / Error splitting the argument list",
+    // which is the failure that silently emptied every scene-detect run.
+    const args = buildSceneDetectArgs("/in.mp4", "fps=30", RATE_FLAG, "/out/%06d.jpg");
+    expect(args).toContain("-fps_mode");
+    expect(args).not.toContain("-vsync");
+  });
+
+  it("keeps the flag, because dropping it duplicates every kept frame", () => {
+    const args = buildSceneDetectArgs("/in.mp4", "fps=30", RATE_FLAG, "/out/%06d.jpg");
+    expect(args[args.indexOf("-fps_mode") + 1]).toBe("vfr");
+  });
+
+  it("recognises ffmpeg refusing a flag it has never heard of", () => {
+    expect(rejectsOption("Unrecognized option 'fps_mode'.\nError splitting", "fps_mode")).toBe(true);
+    expect(rejectsOption("Conversion failed!", "fps_mode")).toBe(false);
+  });
+
+  it("has a legacy flag to fall back to, for a binary older than 5.1", () => {
+    expect(LEGACY_RATE_FLAG).toEqual(["-vsync", "vfr"]);
+  });
+});
+
+describe("where a binary is looked for", () => {
+  it("finds what the app installed itself, which is not on any PATH", async () => {
+    // `lirovo install` downloads a verified yt-dlp into <data>/bin. A Mac with
+    // no Homebrew has nothing on PATH to find, so without this step the
+    // download lands somewhere nothing ever looks and doctor still says
+    // "not found" right after a successful install.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    await mkdir(path.join(data, "bin"), { recursive: true });
+    const target = path.join(data, "bin", "yt-dlp");
+    await writeFile(target, "#!/bin/sh\necho hi\n");
+    await chmod(target, 0o755);
+
+    const paths = { data, runs: "", models: "", bundledBin: null, dbFile: "" };
+    const found = await resolveBinary("yt-dlp", paths, { PATH: "" });
+    expect(found?.path).toBe(target);
+    expect(found?.origin).toBe("installed");
+  });
+
+  it("prefers a bundled copy over an installed one", async () => {
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    for (const dir of ["bin", "bundled"]) await mkdir(path.join(data, dir), { recursive: true });
+    for (const dir of ["bin", "bundled"]) {
+      const f = path.join(data, dir, "ffmpeg");
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("ffmpeg", paths, { PATH: "" }))?.origin).toBe("bundled");
+  });
+
+  it("lets an updated yt-dlp beat the one frozen inside the DMG", async () => {
+    // The opposite rule, and deliberately so. ffmpeg bundled in March still
+    // works in December; a yt-dlp bundled in March does not, because YouTube
+    // moved. If the bundled copy always won there would be no way to fix that
+    // short of shipping a whole new release.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    for (const dir of ["bin", "bundled"]) await mkdir(path.join(data, dir), { recursive: true });
+    for (const dir of ["bin", "bundled"]) {
+      const f = path.join(data, dir, "yt-dlp");
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("yt-dlp", paths, { PATH: "" }))?.origin).toBe("installed");
+  });
+
+  it("still finds the bundled yt-dlp when nothing has been installed", async () => {
+    // The swap must not cost a fresh install its only copy.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    await mkdir(path.join(data, "bundled"), { recursive: true });
+    const f = path.join(data, "bundled", "yt-dlp");
+    await writeFile(f, "#!/bin/sh\n");
+    await chmod(f, 0o755);
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("yt-dlp", paths, { PATH: "" }))?.origin).toBe("bundled");
   });
 });

@@ -1,9 +1,19 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
-import type { PipelineEvent, SourceManifest } from "@lirovo/contracts";
-import { asLirovoError, makeId } from "@lirovo/contracts";
-import { DEPENDENCIES, planForBudget, runDoctor, runExtraction, runMediaPipeline } from "@lirovo/core";
+import { join as pathJoin } from "node:path";
+import type { PipelineEvent, RunStatus, SourceManifest } from "@lirovo/contracts";
+import { ARTIFACT_PATHS, asLirovoError, makeId } from "@lirovo/contracts";
+import {
+  DEFAULT_WHISPER_MODEL_ID,
+  DEPENDENCIES,
+  YT_DLP,
+  planForBudget,
+  runDoctor,
+  runExtraction,
+  runMediaPipeline,
+  whisperModelInstallable,
+} from "@lirovo/core";
 import {
   DEFAULT_VISION_BATCH,
   DEFAULT_VISION_CONCURRENCY,
@@ -15,10 +25,17 @@ import {
   createFsArtifactStore,
   createRunStore,
   createSchemaStore,
+  createSettingsStore,
   createStageLedger,
+  holdLease,
+  installArtifact,
+  purgeEverything,
+  purgeRuns,
+  storageReport,
   isUrl,
   makeAsrProbe,
   makeBinaryProbe,
+  observedStatus,
   openDatabase,
   persistExtraction,
   probeMedia,
@@ -28,11 +45,19 @@ import {
   selectBackend,
   sourceTypeOf,
 } from "@lirovo/node-runtime";
-import type { ExtractRequest, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
-import type { z } from "zod";
-import type { saveSchemaRequestSchema } from "./ipc.js";
-
-type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
+import type {
+  ExtractRequest,
+  InstallOutcome,
+  Preferences,
+  StorageReport,
+  RunArtifacts,
+  RunDetail,
+  RunSummary,
+  SourceInspection,
+  ValueRow,
+} from "./ipc.js";
+import { mediaUrl } from "./media-protocol.js";
+import type { EngineMessage, EngineRequest } from "./engine-protocol.js";
 
 /**
  * The engine, in its own process.
@@ -45,31 +70,41 @@ type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
  * property rather than a slogan.
  */
 
-type Inbound =
-  | { id: string; type: "extract"; request: ExtractRequest }
-  | { id: string; type: "cancel" }
-  | { id: string; type: "doctor" }
-  | { id: string; type: "listRuns" }
-  | { id: string; type: "runDetail"; runId: string }
-  | { id: string; type: "inspect"; source: string }
-  | { id: string; type: "listSchemas" }
-  | { id: string; type: "saveSchema"; input: SaveSchemaRequest }
-  | { id: string; type: "schemaRevisions"; schemaId: string }
-  | { id: string; type: "archiveSchema"; schemaId: string };
-
-type Outbound =
-  | { kind: "event"; event: PipelineEvent }
-  | { kind: "result"; id: string; value: unknown }
-  | { kind: "error"; id: string; error: { code: string; message: string } };
-
-const send = (message: Outbound): void => {
+const send = (message: EngineMessage): void => {
   process.parentPort.postMessage(message);
 };
 
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
-const paths = resolvePaths();
+/**
+ * The bundled tools, when this is a packaged app.
+ *
+ * `resolveBinary` has looked in `paths.bundledBin` since it was written and
+ * has never had a value to look in. This is that value: `Contents/Resources/bin`
+ * inside the .app, which electron-builder fills from `resources/bin` and signs
+ * with the same identity as everything else in the bundle.
+ *
+ * Null in development, where the tools come from Homebrew and a stale copy
+ * under `resources/` would silently shadow the one being worked on.
+ * `resolvePaths` still honours `LIROVO_BUNDLED_BIN` over this.
+ */
+const bundledBin =
+  process.resourcesPath !== undefined && !process.resourcesPath.includes("node_modules/electron")
+    ? pathJoin(process.resourcesPath, "bin")
+    : null;
+
+const paths = resolvePaths(process.env, bundledBin);
 
 let controller: AbortController | null = null;
+
+/**
+ * Is an extraction in flight in this process?
+ *
+ * `controller` is set for exactly as long as one is running, so it is already
+ * the answer — it just needed asking. Purge deletes the run directory that a
+ * live extraction is writing frames into, which leaves artifacts orphaned from
+ * their rows in one direction and rows pointing at deleted files in the other.
+ */
+const extracting = (): boolean => controller !== null;
 
 const withDb = <T>(fn: (db: ReturnType<typeof openDatabase>) => T): T => {
   const db = openDatabase(paths.dbFile);
@@ -81,26 +116,68 @@ const withDb = <T>(fn: (db: ReturnType<typeof openDatabase>) => T): T => {
 };
 
 const listRuns = (): RunSummary[] =>
-  withDb((db) =>
-    db
+  withDb((db) => {
+    const rows = db
       .prepare(
         `SELECT r.id AS runId, r.status, s.title, r.created_at AS createdAt,
-                (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount
-           FROM runs r JOIN sources s ON s.id = r.source_id
-          ORDER BY r.created_at DESC LIMIT 50`,
+                r.lease_expires_at AS leaseExpiresAt,
+                s.duration_s AS durationS, s.kind AS sourceType,
+                sr.name AS schemaName,
+                (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount,
+                (SELECT COUNT(DISTINCT ve.observation_id)
+                   FROM extracted_values v2
+                   JOIN value_evidence ve ON ve.observation_id = v2.observation_id
+                  WHERE v2.run_id = r.id) AS groundedCount,
+                -- From the stage's own recorded output rather than by counting
+                -- files: the frames are written straight to disk and never
+                -- registered as artifact rows, so counting rows returns zero
+                -- for every run that actually produced hundreds.
+                (SELECT json_extract(a.output_json, '$.keptCount')
+                   FROM run_stage_attempts a
+                  WHERE a.run_id = r.id AND a.stage = 'dedup' AND a.status = 'done'
+                  ORDER BY a.attempt DESC LIMIT 1) AS frameCount
+           FROM runs r
+           JOIN sources s ON s.id = r.source_id
+           LEFT JOIN schema_revisions rev ON rev.id = r.schema_revision_id
+           LEFT JOIN schemas sr ON sr.id = rev.schema_id
+          ORDER BY r.created_at DESC LIMIT 200`,
       )
-      .all() as unknown as RunSummary[],
-  );
+      .all() as unknown as (RunSummary & { status: RunStatus; leaseExpiresAt: number | null })[];
+    // Derived on read, never written: a row that says running an hour after its
+    // process died is the single most misleading thing this list can show.
+    return rows.map(({ leaseExpiresAt, ...row }) => ({
+      ...row,
+      status: observedStatus(row.status, leaseExpiresAt),
+    }));
+  });
 
 const runDetail = (runId: string): RunDetail | null =>
   withDb((db) => {
     const head = db
       .prepare(
-        `SELECT r.id AS runId, r.status, s.title, s.duration_s AS durationS, s.uri AS sourcePath
+        `SELECT r.id AS runId, r.status, s.title, s.duration_s AS durationS, s.uri AS sourcePath,
+                r.error_code AS errorCode, r.error_message AS errorMessage,
+                r.lease_expires_at AS leaseExpiresAt
            FROM runs r JOIN sources s ON s.id = r.source_id WHERE r.id = ?`,
       )
-      .get(runId) as Omit<RunDetail, "values" | "transcriptEngine"> | undefined;
+      .get(runId) as
+      | (Omit<RunDetail, "values" | "transcriptEngine" | "stages" | "status"> & {
+          status: RunStatus;
+          leaseExpiresAt: number | null;
+        })
+      | undefined;
     if (head === undefined) return null;
+
+    // Every attempt, not the latest: a stage that failed twice and then passed
+    // is a different story from one that passed first time, and the retry is
+    // exactly what someone troubleshooting needs to see.
+    const stages = db
+      .prepare(
+        `SELECT stage, attempt, status, error_code AS errorCode, error_message AS errorMessage,
+                started_at AS startedAt, finished_at AS finishedAt
+           FROM run_stage_attempts WHERE run_id = ? ORDER BY started_at, attempt`,
+      )
+      .all(runId) as unknown as RunDetail["stages"];
 
     const engine = db.prepare("SELECT asr_engine FROM run_manifests WHERE run_id = ?").get(runId) as
       | { asr_engine: string | null }
@@ -122,12 +199,73 @@ const runDetail = (runId: string): RunDetail | null =>
         WHERE ve.observation_id = ? ORDER BY e.t_start`,
     );
 
+    const { leaseExpiresAt, ...rest } = head;
     return {
-      ...head,
+      ...rest,
+      status: observedStatus(head.status, leaseExpiresAt),
+      stages,
       transcriptEngine: engine?.asr_engine ?? null,
       values: rows.map((row) => ({ ...row, evidence: evidence.all(row.observationId) as unknown as ValueRow["evidence"] })),
     };
   });
+
+/**
+ * Everything the run wrote, read back for the review surface.
+ *
+ * Each artifact is optional on purpose. A run that failed at scene-detect still
+ * has a transcript worth reading, and a run with no model backend still has
+ * frames worth looking at — so a missing file is an absent section, never an
+ * error that hides the parts that did survive.
+ */
+const runArtifacts = async (runId: string): Promise<RunArtifacts> => {
+  const store = createFsArtifactStore(paths.runs);
+  const readJson = async <T>(key: string): Promise<T | null> => {
+    const text = await store.getText(runId, key);
+    if (text === null) return null;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A half-written artifact is missing, not fatal: the run may have been
+      // killed mid-write and every other section still reads.
+      return null;
+    }
+  };
+
+  const [manifest, transcript, framesManifest, vision, graph] = await Promise.all([
+    readJson<{ duration_s?: number }>(ARTIFACT_PATHS.sourceManifest),
+    readJson<RunArtifacts["transcript"]>(ARTIFACT_PATHS.transcript),
+    readJson<{ dedup?: { idx: number; t_ms: number; kept: boolean }[]; raw?: { idx: number; t_ms: number }[] }>(
+      ARTIFACT_PATHS.framesManifest,
+    ),
+    readJson<{ analyses?: RunArtifacts["analyses"] }>(ARTIFACT_PATHS.vision),
+    readJson<{ nodes?: Record<string, unknown>[]; edges?: Record<string, unknown>[] }>(ARTIFACT_PATHS.graph),
+  ]);
+
+  const videoPath = store.resolve(runId, ARTIFACT_PATHS.video);
+  const hasVideo = await store.exists(runId, ARTIFACT_PATHS.video);
+
+  // Dedup is the list worth showing — the kept frames are the ones the model
+  // was actually given — but a run that failed before dedup only has raw.
+  const dedup = framesManifest?.dedup ?? [];
+  const source = dedup.length > 0 ? dedup : (framesManifest?.raw ?? []).map((f) => ({ ...f, kept: true }));
+  const frames = source.map((frame) => ({
+    idx: frame.idx,
+    tMs: frame.t_ms,
+    kept: frame.kept !== false,
+    url: mediaUrl(
+      store.resolve(runId, dedup.length > 0 ? ARTIFACT_PATHS.dedupFrame(frame.idx) : ARTIFACT_PATHS.rawFrame(frame.idx)),
+    ),
+  }));
+
+  return {
+    videoUrl: hasVideo ? mediaUrl(videoPath) : null,
+    durationS: manifest?.duration_s ?? transcript?.durationS ?? null,
+    transcript,
+    frames,
+    analyses: vision?.analyses ?? [],
+    graph: graph === null ? null : { nodes: graph.nodes ?? [], edges: graph.edges ?? [] },
+  };
+};
 
 /**
  * Recognise a source without downloading or transcoding it.
@@ -194,18 +332,102 @@ const inspect = async (source: string): Promise<SourceInspection> => {
   }
 };
 
+/**
+ * Fetch one of the two dependencies with an official, checksummed artifact.
+ *
+ * The verification lives in `installArtifact`; this only names what to fetch
+ * and forwards the byte count so a 60MB model is not a frozen button.
+ */
+const install = async (what: "whisper-model" | "yt-dlp", model?: string): Promise<InstallOutcome> => {
+  const id = model ?? DEFAULT_WHISPER_MODEL_ID;
+  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(id);
+  if (item === null) throw asLirovoError(new Error(`nothing known as ${what} ${id}`), "INTERNAL");
+  const result = await installArtifact(item, paths, {
+    onProgress: (p) => send({ kind: "install-progress", progress: { what, received: p.received, total: p.total } }),
+  });
+  // A model that was downloaded and then not used is a 574MB no-op. Choosing
+  // it IS installing it, so the setting moves with the file.
+  if (what === "whisper-model") setWhisperModel(id);
+  return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
+};
+
+/**
+ * Point the loader at the chosen model.
+ *
+ * `resolveModelPath` reads `LIROVO_WHISPER_MODEL` first, so writing it here is
+ * what makes the choice take effect in this process — the setting is the
+ * durable record, the variable is how it reaches the code that opens the file.
+ */
+const setWhisperModel = (id: string): void => {
+  withDb((db) => createSettingsStore(db).set("whisper_model", id));
+  const spec = whisperModelInstallable(id);
+  if (spec !== null) process.env["LIROVO_WHISPER_MODEL"] = pathJoin(paths.data, spec.relPath);
+};
+
+const storage = async (): Promise<StorageReport> => withDb((db) => storageReport(paths, db));
+
+/**
+ * Delete, for real.
+ *
+ * Both live in node-runtime so they can be tested against a real filesystem
+ * and a real database, which is not something a module that talks to
+ * `process.parentPort` can be.
+ */
+const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> => {
+  if (extracting()) {
+    throw asLirovoError(
+      new Error("an extraction is running — it writes into the directory this would delete"),
+      "STORE_BUSY",
+    );
+  }
+  return what === "everything" ? purgeEverything(paths) : withDb((db) => purgeRuns(paths, db));
+};
+
+const preferences = (): Preferences =>
+  withDb((db) => {
+    const settings = createSettingsStore(db);
+    return {
+      defaultBackendId: settings.get("default_backend"),
+      whisperModelId: settings.get("whisper_model"),
+      // Stable unless someone opted in. A preview build is a thing you choose,
+      // never a thing you are moved onto.
+      updateChannel: settings.get("update_channel") === "beta" ? "beta" : "latest",
+    };
+  });
+
+// On boot, honour the model the user chose last time.
+{
+  const chosen = preferences().whisperModelId;
+  if (chosen !== null) setWhisperModel(chosen);
+}
+
+const setDefaultBackend = (backendId: string | null): Preferences => {
+  withDb((db) => createSettingsStore(db).set("default_backend", backendId));
+  return preferences();
+};
+
 const doctor = async (): Promise<unknown> => {
   const probe = makeBinaryProbe(paths, realExec);
-  return runDoctor({
+  const report = await runDoctor({
     paths,
     dependencies: DEPENDENCIES,
     probeBinary: probe,
     backends: buildBackends({ exec: realExec, paths }),
     probeAsr: makeAsrProbe(buildAsrStrategies({ exec: realExec, paths }), paths),
   });
+  // The choice rides along with the probe that found the candidates: two round
+  // trips would let the panel paint a default that the next answer contradicts.
+  return { ...report, ...preferences() };
 };
 
 const extract = async (request: ExtractRequest): Promise<unknown> => {
+  // One at a time. Two runs in this process share `controller`, so the second
+  // would silently take the first's cancellation and the first would become
+  // uncancellable.
+  if (extracting()) {
+    throw asLirovoError(new Error("an extraction is already running"), "STORE_BUSY");
+  }
+
   await mkdir(paths.runs, { recursive: true });
   const store = createFsArtifactStore(paths.runs);
   const db = openDatabase(paths.dbFile);
@@ -215,6 +437,9 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
 
   controller = new AbortController();
   const signal = controller.signal;
+  // A holder, not a `let`: the assignment happens inside `onIngested`, and
+  // TypeScript will not carry a closure's assignment out to the `finally`.
+  const lease: { release: (() => void) | null } = { release: null };
 
   try {
     const stages = await buildMediaStages({ exec: realExec, store, paths });
@@ -234,6 +459,11 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
         // The revision is what makes the result explainable later: without it a
         // run cannot say what it was asked for.
         runs.createRun(runId, sourceId, request.schemaRevisionId ?? null, owner);
+        // The lease is good for a minute and a run takes six. Held from the
+        // moment the row exists until the `finally` below, or the library
+        // reads a working extraction as stopped and another process is free
+        // to claim it.
+        lease.release = holdLease(runs, runId, owner);
       },
     };
 
@@ -247,10 +477,19 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
 
     const tuning = { effort: "low" as const };
     const backends = buildBackends({ exec: realExec, paths, tuning });
-    const backend =
-      request.backendId === null
-        ? await selectBackend(backends, { images: false })
-        : (backends.find((b) => b.id === request.backendId) ?? null);
+    // Explicit request first, then the stored default, then whatever answers.
+    // The stored default is a preference, not a promise: if the user chose
+    // Ollama and then quit Ollama, the run proceeds on something that works
+    // rather than failing to honour a setting.
+    const chosen = request.backendId ?? preferences().defaultBackendId;
+    const preferred = chosen === null ? null : (backends.find((b) => b.id === chosen) ?? null);
+    // Probed, not assumed: every backend is in the registry whether or not it
+    // answers, so picking one by id alone would hand the run a dead server.
+    const reachable =
+      preferred !== null && (await preferred.detect().catch(() => ({ available: false }))).available
+        ? preferred
+        : null;
+    const backend = reachable ?? (await selectBackend(backends, { images: false }));
     if (backend === null) {
       throw asLirovoError(new Error("no inference backend available"), "NO_INFERENCE_BACKEND");
     }
@@ -287,12 +526,13 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
     });
     throw lirovo;
   } finally {
+    lease.release?.();
     controller = null;
     db.close();
   }
 };
 
-const handle = async (message: Inbound): Promise<unknown> => {
+const handle = async (message: EngineRequest): Promise<unknown> => {
   switch (message.type) {
     case "extract":
       return extract(message.request);
@@ -313,6 +553,21 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return withDb((db) => createSchemaStore(db).save(message.input));
     case "schemaRevisions":
       return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
+    case "runArtifacts":
+      return runArtifacts(message.runId);
+    case "install":
+      return install(message.what, message.model);
+    case "storage":
+      return storage();
+    case "purge":
+      return purge(message.what);
+    case "preferences":
+      return preferences();
+    case "setUpdateChannel":
+      withDb((db) => createSettingsStore(db).set("update_channel", message.channel));
+      return preferences();
+    case "setDefaultBackend":
+      return setDefaultBackend(message.backendId);
     case "archiveSchema":
       return withDb((db) => {
         createSchemaStore(db).archive(message.schemaId);
@@ -322,7 +577,7 @@ const handle = async (message: Inbound): Promise<unknown> => {
 };
 
 process.parentPort.on("message", (wrapper) => {
-  const message = wrapper.data as Inbound;
+  const message = wrapper.data as EngineRequest;
   handle(message)
     .then((value) => send({ kind: "result", id: message.id, value }))
     .catch((error: unknown) => {

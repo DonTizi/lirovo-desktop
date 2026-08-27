@@ -21,6 +21,8 @@ import {
   buildMediaStages,
   createFsArtifactStore,
   createRunStore,
+  createSettingsStore,
+  holdLease,
   openDatabase,
   persistExtraction,
   persistManifest,
@@ -158,6 +160,12 @@ export const extractCommand = async (
   // desktop app on one laptop are two writers, and "same host" would let them
   // take each other's runs.
   const owner = `${hostname()}:${process.pid}`;
+  // Renewed while the run is in flight, released in the `finally`. Without it
+  // the sixty-second lease expires under every real extraction.
+  //
+  // A holder, not a `let`: the assignment happens inside `onIngested`, and
+  // TypeScript will not carry a closure's assignment out to the `finally`.
+  const lease: { release: (() => void) | null } = { release: null };
 
   const controller = new AbortController();
   const onSigint = (): void => {
@@ -179,6 +187,9 @@ export const extractCommand = async (
       if (!runs.claim(opts.resumeRunId, owner)) {
         throw new LirovoError("RUN_ALREADY_CLAIMED", `${opts.resumeRunId} is held by another process`);
       }
+      // A resumed run took the lease by claiming it rather than creating it,
+      // and needs it held for exactly the same reason.
+      lease.release = holdLease(runs, opts.resumeRunId, owner);
     }
 
     const stages = await buildMediaStages({ exec: realExec, store, paths });
@@ -205,7 +216,11 @@ export const extractCommand = async (
       // Resolve the backend BEFORE any download: discovering there is nothing
       // to reason with after a twenty-minute ingest is the worst moment to
       // find out.
-      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), opts.backendId);
+      // `--backend` first, then whatever the desktop app last chose: one
+      // database, one preference, so `lirovo extract` cannot quietly disagree
+      // with the model the user selected in the window.
+      const preferred = opts.backendId ?? createSettingsStore(db).get("default_backend");
+      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), preferred);
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
 
@@ -228,6 +243,7 @@ export const extractCommand = async (
         if (opts.resumeRunId !== null) return;
         const sourceId = runs.upsertSource(manifest, opts.source);
         runs.createRun(runId, sourceId, null, owner);
+        lease.release = holdLease(runs, runId, owner);
       },
     };
     const input = { runId, source: opts.source, frameCap: opts.frameCap, signal: controller.signal };
@@ -267,7 +283,6 @@ export const extractCommand = async (
         data: result.data,
         evidenceByField: result.evidenceByField,
       });
-      await store.put(runId, ARTIFACT_PATHS.graph, `${JSON.stringify(result.kg, null, 2)}\n`);
       persistManifest(db, {
         runId,
         sourceSha256: result.manifest.content_sha256,
@@ -359,6 +374,7 @@ export const extractCommand = async (
         ? EXIT.unavailable
         : EXIT.failed;
   } finally {
+    lease.release?.();
     process.removeListener("SIGINT", onSigint);
     db.close();
   }

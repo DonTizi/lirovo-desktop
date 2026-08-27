@@ -35,7 +35,26 @@ export default defineConfig({
       {
         entry: "src/preload/index.ts",
         onstart: ({ reload }) => reload(),
-        vite: { build: { outDir: "dist-electron/preload", rollupOptions: { external: ["electron"] } } },
+        vite: {
+          build: {
+            outDir: "dist-electron/preload",
+            // CommonJS, with a `.cjs` extension because the package is
+            // `type: module`. A SANDBOXED preload cannot be ESM: Electron
+            // loads it, the import fails, `contextBridge` never runs, and the
+            // window comes up looking fine with no `window.lirovo` on it and
+            // nothing in any log. Found exactly that way.
+            //
+            // Set through `lib`, not `rollupOptions.output.format` — the
+            // plugin builds its own `lib` config and the output override is
+            // discarded.
+            lib: {
+              entry: "src/preload/index.ts",
+              formats: ["cjs"],
+              fileName: () => "index.cjs",
+            },
+            rollupOptions: { external: ["electron"] },
+          },
+        },
       },
     ]),
     renderer(),

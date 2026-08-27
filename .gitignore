@@ -1,5 +1,10 @@
 node_modules/
 dist/
+# Electron's build output. `dist/` alone does not match it, so eleven stale
+# bundles were committed — including chunks from builds nobody can identify.
+dist-electron/
+release/
+apps/desktop/resources/bin/
 *.tsbuildinfo
 .DS_Store
 .turbo/

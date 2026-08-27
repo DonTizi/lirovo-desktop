@@ -8,7 +8,7 @@ import type {
   Stage,
   Transcript,
 } from "@lirovo/contracts";
-import { ARTIFACT_PATHS, LirovoError, asLirovoError, mergeStagePointer } from "@lirovo/contracts";
+import { ARTIFACT_PATHS, LirovoError, asLirovoError, linkedSignal, mergeStagePointer } from "@lirovo/contracts";
 import { chainHash, noLedger, type StageLedger } from "./ledger.js";
 
 /**
@@ -179,17 +179,40 @@ export const runMediaPipeline = async (
 
     // Transcription and the visual branch are independent, so they run together
     // — on a long recording the frames are ready by the time whisper finishes.
-    const [transcribed, visual] = await Promise.all([
+    //
+    // Settled, not `all`: `all` rejects the moment transcription fails and
+    // leaves the visual branch running behind it, so the caller closes the
+    // database while scene-detect is still working and its ledger write lands
+    // on a closed handle ("scene-detect degraded: database is not open"). The
+    // stage's real outcome is lost and the user is shown a failure that never
+    // happened. Waiting for both means nothing is in flight when this returns.
+    // A child signal, so the loser of a race is told to stop.
+    //
+    // Waiting for the sibling is what keeps a stage from writing to a closed
+    // database, but waiting is not the same as waiting FOREVER: transcription
+    // can fail in a second while scene-detect still has forty-five minutes of
+    // timeout ahead of it, and the user would sit through all of it to be told
+    // about a failure that already happened. Aborted, then awaited — so
+    // nothing is in flight when this returns and nothing runs for no reason.
+    const race = linkedSignal(input.signal);
+    const stopSibling = (): void => race.abort();
+    const signal = race.signal;
+
+    const asrRun = 
       stage("asr", normalized.hash, null, () =>
         deps.asr.transcribe({
           runId: input.runId,
           sourceKind: ingested.value.manifest.source_type === "file" ? "file" : "url",
           sourceUri: input.source,
           audioPath: normalized.value.audio_path,
-          signal: input.signal,
+          signal,
         }),
-      ),
-      (async () => {
+      ).catch((error: unknown) => {
+        stopSibling();
+        throw error;
+      });
+
+    const visualRun = (async () => {
         if (normalized.value.video_path === null) {
           for (const skipped of ["scene-detect", "dedup"] as const) {
             emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
@@ -201,7 +224,7 @@ export const runMediaPipeline = async (
             runId: input.runId,
             videoPath: normalized.value.video_path as string,
             frameCap: input.frameCap,
-            signal: input.signal,
+            signal,
           }),
         );
         if (detected.value.rawFrameCount === 0) {
@@ -210,7 +233,7 @@ export const runMediaPipeline = async (
           return { raw: 0, kept: 0, dropped: 0 };
         }
         const deduped = await stage("dedup", detected.hash, null, () =>
-          deps.stages.dedup({ runId: input.runId, signal: input.signal }),
+          deps.stages.dedup({ runId: input.runId, signal }),
         );
         return {
           raw: detected.value.rawFrameCount,
@@ -233,8 +256,14 @@ export const runMediaPipeline = async (
           message: lirovo.message,
         });
         return { raw: 0, kept: 0, dropped: 0 };
-      }),
-    ]);
+      });
+
+    const [asrSettled, visualSettled] = await Promise.allSettled([asrRun, visualRun]);
+    race.dispose();
+    if (visualSettled.status === "rejected") throw visualSettled.reason;
+    if (asrSettled.status === "rejected") throw asrSettled.reason;
+    const transcribed = asrSettled.value;
+    const visual = visualSettled.value;
 
     const transcript = transcribed.value;
     await deps.store.put(

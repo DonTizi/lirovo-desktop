@@ -1,0 +1,78 @@
+# How the app becomes something a person can install.
+#
+# Two rules here are load-bearing and neither is obvious:
+#
+#   `zip` is not optional. Squirrel.Mac updates from the zip, and with `dmg`
+#   alone electron-builder never writes `latest-mac.yml` — so the updater finds
+#   no feed, reports nothing, and updates silently never happen while every
+#   part of the build looks green.
+#
+#   `extraResources` COPIES and `binaries` SIGNS. They are different lists for
+#   different jobs, and a binary in only the first one ships unsigned inside a
+#   notarised bundle, which macOS refuses to launch.
+appId: ai.lirovo.desktop
+productName: Lirovo
+copyright: Copyright © 2026 Lirovo
+
+directories:
+  output: release
+  buildResources: build
+
+# The renderer, the main-process bundles, and the manifest. Nothing else: the
+# workspace packages are already bundled into dist-electron by vite, so
+# node_modules has no runtime role.
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter: ["**/*"]
+  # The GPL's written offer has to reach whoever received the binary, and the
+  # `files` allowlist above does not include anything outside dist/. A DMG that
+  # ships a GPL FFmpeg with no NOTICE beside it does not satisfy the licence.
+  - from: ../../NOTICE
+    to: NOTICE
+  - from: ../../LICENSE
+    to: LICENSE
+
+mac:
+  # No `arch:` here on purpose. Declaring it makes every invocation build both
+  # architectures from ONE `resources/bin`, which is how an x64 DMG ends up
+  # carrying arm64 tools — reproduced once, and it built green. The arch comes
+  # from the command line, one per invocation, matching the collector that ran
+  # just before it.
+  target: [dmg, zip]
+  category: public.app-category.productivity
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  # Applies to the helpers AND to everything in `binaries` below — see the
+  # comment at the top of each file.
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # Signed as well as copied. `extraResources` alone leaves them unsigned.
+  binaries:
+    - resources/bin/ffmpeg
+    - resources/bin/ffprobe
+    - resources/bin/whisper-cli
+    - resources/bin/yt-dlp
+  notarize: true
+
+# Runs after the app is assembled and before it is signed. It refuses to
+# continue when a bundled tool does not match the architecture being packed —
+# the one failure in this build that is otherwise completely silent and only
+# surfaces as "Bad CPU type" on a stranger's Intel Mac.
+afterPack: scripts/verify-arch.cjs
+
+dmg:
+  contents:
+    - { x: 140, y: 200, type: file }
+    - { x: 400, y: 200, type: link, path: /Applications }
+
+publish:
+  provider: github
+  owner: DonTizi
+  repo: lirovo-desktop

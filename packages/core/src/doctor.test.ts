@@ -17,6 +17,7 @@ const spec = (id: DependencySpec["id"], required: boolean): DependencySpec => ({
   required,
   why: "test",
   versionArgs: ["--version"],
+  install: `brew install ${id}`,
 });
 
 const found = (spec: DependencySpec): BinaryStatus => ({
@@ -27,9 +28,18 @@ const found = (spec: DependencySpec): BinaryStatus => ({
   version: "1.0",
   required: spec.required,
   why: spec.why,
+  stale: null,
+  fix: null,
 });
 
-const missing = (spec: DependencySpec): BinaryStatus => ({ ...found(spec), found: true, path: null, origin: null, version: null });
+const missing = (spec: DependencySpec): BinaryStatus => ({
+  ...found(spec),
+  found: false,
+  path: null,
+  origin: null,
+  version: null,
+  fix: { label: "Install", command: spec.install },
+});
 
 const backend = (
   id: string,
@@ -37,6 +47,7 @@ const backend = (
   caps: Partial<InferenceBackend["capabilities"]> = {},
 ): InferenceBackend => ({
   id,
+  setup: available ? null : { label: "Install", command: `install ${id}` },
   capabilities: { nativeJsonSchema: false, images: "inline", spawnsProcessPerCall: false, ...caps },
   detect: async () => ({ available, version: available ? "1.0" : null }),
   complete: async () => {
@@ -70,7 +81,7 @@ describe("runDoctor", () => {
     const report = await runDoctor({
       paths,
       dependencies: specs,
-      probeBinary: async (s) => ({ ...missing(s), found: false }),
+      probeBinary: async (s) => missing(s),
       backends: [backend("openai-compatible", true)],
       probeAsr: bothKinds,
     });

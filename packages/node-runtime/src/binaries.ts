@@ -21,20 +21,51 @@ interface Resolved {
 }
 
 /**
- * Bundled first, then PATH, then Homebrew.
+ * Tools that go stale on someone else's schedule.
+ *
+ * yt-dlp is the whole set. YouTube changes its player every few weeks and an
+ * old build stops being able to download while still reading metadata
+ * perfectly well — the failure looks like a broken video, not a stale tool.
+ * Whatever ships inside a DMG is frozen at the day that DMG was built, so for
+ * these the app's own verified download wins over the bundled copy. Anything
+ * else stays bundled-first, because a signed build should use the binary it
+ * was notarised with.
+ *
+ * `installed` is not "whatever is lying around": it is only ever written by
+ * `installArtifact`, which checks the publisher's own SHA-256 before the file
+ * is given its final name.
+ */
+const PERISHABLE: ReadonlySet<string> = new Set(["yt-dlp"]);
+
+/**
+ * Bundled, then what this app installed, then PATH, then Homebrew — with the
+ * first two swapped for anything in `PERISHABLE`.
  *
  * Bundled wins so a signed build uses the binary it was notarised with rather
- * than whatever the user happens to have installed; Homebrew is last so a
- * developer machine still works with nothing bundled.
+ * than whatever the user happens to have installed. The app's own `bin`
+ * directory comes next: `lirovo install` downloads a verified yt-dlp there,
+ * and a Mac with no Homebrew has nothing on PATH to find — without this step
+ * the download lands somewhere nothing ever looks. Homebrew is last so a
+ * developer machine still works with nothing bundled and nothing installed.
  */
 export const resolveBinary = async (
   id: string,
   paths: LirovoPaths,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Resolved | null> => {
-  if (paths.bundledBin !== null) {
-    const bundled = path.join(paths.bundledBin, id);
-    if (await isExecutable(bundled)) return { path: bundled, origin: "bundled" };
+  const bundled = paths.bundledBin === null ? null : path.join(paths.bundledBin, id);
+  const installed = path.join(paths.data, "bin", id);
+  const order: readonly Resolved[] = PERISHABLE.has(id)
+    ? [
+        { path: installed, origin: "installed" },
+        ...(bundled === null ? [] : [{ path: bundled, origin: "bundled" } as const]),
+      ]
+    : [
+        ...(bundled === null ? [] : [{ path: bundled, origin: "bundled" } as const]),
+        { path: installed, origin: "installed" },
+      ];
+  for (const candidate of order) {
+    if (await isExecutable(candidate.path)) return candidate;
   }
   for (const dir of (env["PATH"] ?? "").split(path.delimiter)) {
     if (dir === "") continue;
@@ -93,6 +124,7 @@ export const makeBinaryProbe =
         required: spec.required,
         why: spec.why,
         stale: null,
+        fix: { label: "Install", command: spec.install },
       };
     }
     // A binary that resolves but cannot run is a missing binary as far as the
@@ -101,7 +133,14 @@ export const makeBinaryProbe =
     try {
       const { stdout, stderr } = await exec(resolved.path, spec.versionArgs, {
         env: { PATH: env["PATH"] ?? "" },
-        timeoutMs: 10_000,
+        // Thirty seconds, because yt-dlp's standalone macOS build is a
+        // PyInstaller bundle that unpacks itself on EVERY launch: measured at
+        // 9.7s to answer `--version`, cold or warm. At the old ten-second
+        // ceiling the probe raced it and usually lost, so a perfectly good
+        // binary reported no version — and with no version there is no date,
+        // and with no date the staleness warning that predicts the 403 can
+        // never fire.
+        timeoutMs: 30_000,
       });
       version = parseVersion(stdout || stderr);
     } catch {
@@ -110,6 +149,9 @@ export const makeBinaryProbe =
     // Only yt-dlp goes stale in a way that matters: its version IS a date, and
     // the platforms it reads change under it. ffmpeg from last year is fine.
     const age = spec.id === "yt-dlp" ? versionAgeDays(version) : null;
+    // A stale binary is upgraded, not installed, and the command differs by
+    // where it came from. The probe is the only place that knows which.
+    const stale = age !== null && age > STALE_AFTER_DAYS;
     return {
       id: spec.id,
       found: true,
@@ -118,9 +160,12 @@ export const makeBinaryProbe =
       version,
       required: spec.required,
       why: spec.why,
-      stale:
-        age !== null && age > STALE_AFTER_DAYS
-          ? `${age} days old — platforms change and old builds stop being able to download`
-          : null,
+      stale: stale ? `${age} days old — platforms change and old builds stop being able to download` : null,
+      fix: stale
+        ? {
+            label: "Update",
+            command: resolved.origin === "homebrew" ? `brew upgrade ${spec.id}` : `${spec.id} -U`,
+          }
+        : null,
     };
   };

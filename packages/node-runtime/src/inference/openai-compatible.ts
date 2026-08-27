@@ -2,6 +2,7 @@ import type {
   BackendCapabilities,
   CompletionRequest,
   CompletionResult,
+  Fix,
   InferenceBackend,
   Message,
 } from "@lirovo/contracts";
@@ -15,6 +16,8 @@ export interface OpenAiCompatibleConfig {
   readonly model: string;
   readonly apiKey?: string;
   readonly fetch?: typeof globalThis.fetch;
+  /** What a user runs to bring the server up, when it is not answering. */
+  readonly setup?: Fix;
 }
 
 const CAPABILITIES: BackendCapabilities = {
@@ -60,6 +63,7 @@ export const createOpenAiCompatibleBackend = (config: OpenAiCompatibleConfig): I
 
   return {
     id: config.id ?? "openai-compatible",
+    setup: config.setup ?? null,
     capabilities: CAPABILITIES,
 
     async detect() {

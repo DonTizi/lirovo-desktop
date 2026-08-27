@@ -27,7 +27,11 @@ export const summarizeYtDlpFailure = (message: string): string => {
     .filter((line) => line.trim().startsWith("ERROR:"))
     .map((line) => line.replace(/^\s*ERROR:\s*/, "").trim());
   if (errors.length === 0) return message.split("\n")[0]?.trim() ?? message;
-  return explainYtDlpError(errors.join("; "));
+  // Summarising only. Explaining here too meant a caller that also explained
+  // wrapped an already-explained string in its own explanation: "that link is
+  // not one yt-dlp knows how to open (that link is not one yt-dlp knows how to
+  // open (Unsupported URL: …))".
+  return errors.join("; ");
 };
 
 /**
@@ -49,7 +53,15 @@ export const explainYtDlpError = (message: string): string => {
     return `this video is not available to download — it may be private, deleted, or restricted (${message})`;
   }
   if (/is not a valid URL|Unsupported URL/i.test(message)) {
-    return `that link is not one yt-dlp knows how to open (${message})`;
+    return "that link is not one yt-dlp knows how to open — it needs a page with a video on it";
+  }
+  // Named separately from a refusal: nothing about the video is wrong, the
+  // address simply does not exist, and telling someone to update yt-dlp for a
+  // typo sends them to fix the wrong thing.
+  const host = /Failed to resolve '([^']+)'/.exec(message)?.[1];
+  if (host !== undefined) return `${host} could not be reached — check the address, and the network`;
+  if (/nodename nor servname|getaddrinfo|Temporary failure in name resolution/i.test(message)) {
+    return "that address could not be reached — check the link, and the network";
   }
   return message;
 };
@@ -114,7 +126,7 @@ export const createCaptionsStrategy = (deps: CaptionsDeps): AsrStrategy => ({
         { cwd: dir, signal: req.signal as AbortSignal, timeoutMs: 120_000 },
       ).catch((error: unknown) => {
         if (error instanceof LirovoError && error.code === "CANCELLED") throw error;
-        failure = summarizeYtDlpFailure(error instanceof Error ? error.message : String(error));
+        failure = explainYtDlpError(summarizeYtDlpFailure(error instanceof Error ? error.message : String(error)));
       });
 
       const vttFile = (await readdir(dir)).find((f) => f.endsWith(".vtt"));

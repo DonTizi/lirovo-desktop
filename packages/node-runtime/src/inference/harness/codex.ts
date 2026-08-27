@@ -16,6 +16,7 @@ export const codexSpec: HarnessSpec = {
   // Verified by running it: `--output-schema` takes a FILE path.
   schemaMode: "file",
   versionArgs: ["--version"],
+  install: "npm i -g @openai/codex",
 
   buildArgs: ({ schemaPath, tuning }) => [
     "exec",

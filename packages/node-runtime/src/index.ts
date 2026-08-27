@@ -1,6 +1,8 @@
 export * from "./exec.js";
 export * from "./paths.js";
 export * from "./binaries.js";
+export * from "./install.js";
+export * from "./library.js";
 export * from "./media/index.js";
 export * from "./store/artifacts.js";
 export * from "./store/db.js";
@@ -9,6 +11,7 @@ export * from "./store/runs.js";
 export * from "./store/results.js";
 export * from "./store/ledger.js";
 export * from "./store/schemas.js";
+export * from "./store/settings.js";
 export * from "./p-map.js";
 export * from "./asr/index.js";
 export * from "./inference/index.js";

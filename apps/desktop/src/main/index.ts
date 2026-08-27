@@ -4,14 +4,28 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
 import {
   CHANNELS,
+  defaultBackendSchema,
   extractRequestSchema,
+  busySchema,
+  installSchema,
+  purgeSchema,
+  revealSchema,
+  updateChannelSchema,
   inspectRequestSchema,
   runIdSchema,
   saveSchemaRequestSchema,
   schemaIdSchema,
 } from "./ipc.js";
 
+import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
+import { checkNow, currentVersion, downloadUpdate, installUpdate, setChannel, startUpdater, type UpdateChannel } from "./updater.js";
+import type { EngineMessage } from "./engine-protocol.js";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Before `whenReady`, which is the only moment a privileged scheme may be
+// declared. Everything else about the protocol is set up after.
+registerMediaScheme();
 const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
 
 let window: BrowserWindow | null = null;
@@ -29,15 +43,19 @@ const startEngine = (): UtilityProcess => {
   const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], { stdio: "inherit" });
 
   child.on("message", (message: unknown) => {
-    const msg = message as
-      | { kind: "event"; event: unknown }
-      | { kind: "result"; id: string; value: unknown }
-      | { kind: "error"; id: string; error: { code: string; message: string } };
+    const msg = message as EngineMessage;
 
+    // Both are pushes, not answers: neither carries a request id, so neither
+    // can be looked up in `pending`.
     if (msg.kind === "event") {
       window?.webContents.send(CHANNELS.engineEvent, msg.event);
       return;
     }
+    if (msg.kind === "install-progress") {
+      window?.webContents.send(CHANNELS.installProgress, msg.progress);
+      return;
+    }
+
     const waiting = pending.get(msg.id);
     if (waiting === undefined) return;
     pending.delete(msg.id);
@@ -84,10 +102,16 @@ const createWindow = (): void => {
     backgroundColor: "#101012",
     titleBarStyle: "hiddenInset",
     webPreferences: {
-      preload: path.join(here, "../preload/index.js"),
+      preload: path.join(here, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // On. The preload only uses contextBridge, ipcRenderer and
+      // webUtils.getPathForFile, all of which a sandboxed preload has — so
+      // there is nothing to buy by leaving Node reachable from the renderer.
+      // This app renders transcripts and OCR text, which is content an
+      // attacker can influence; with the sandbox off, a renderer compromise
+      // reaches Node directly instead of stopping at the bridge.
+      sandbox: true,
     },
   });
 
@@ -123,7 +147,39 @@ const guard =
     return result(() => handler(payload));
   };
 
+/**
+ * Whether a run is in flight, as last reported by the renderer.
+ *
+ * The main process cannot see the engine's state, and the one question it
+ * needs answering — may I quit and install? — has to be answerable
+ * immediately. So the renderer tells it when the answer changes.
+ */
+let busy = false;
+
+/**
+ * The channel this launch started on.
+ *
+ * Read once from the settings table before the first check, because the
+ * updater needs it before the window exists and the engine process is the only
+ * thing that can read the database.
+ */
+let channelAtBoot: UpdateChannel = "latest";
+
 app.whenReady().then(() => {
+  installMediaProtocol();
+
+  void ask<{ updateChannel: UpdateChannel }>({ type: "preferences" })
+    .then((prefs) => {
+      channelAtBoot = prefs.updateChannel;
+      setChannel(channelAtBoot);
+    })
+    .catch(() => undefined);
+
+  startUpdater({
+    send: (event) => window?.webContents.send(CHANNELS.updateEvent, event),
+    canRestart: () => !busy,
+    channel: () => channelAtBoot,
+  });
   ipcMain.handle(CHANNELS.doctor, guard(() => ask({ type: "doctor" })));
   ipcMain.handle(CHANNELS.listRuns, guard(() => ask({ type: "listRuns" })));
 
@@ -154,6 +210,103 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.archiveSchema,
     guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
+  );
+
+  ipcMain.handle(
+    CHANNELS.runArtifacts,
+    guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId })),
+  );
+  ipcMain.handle(
+    CHANNELS.install,
+    guard((payload) => {
+      const { what, model } = installSchema.parse(payload);
+      return ask({ type: "install", what, ...(model === undefined ? {} : { model }) });
+    }),
+  );
+  ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
+
+  // --- updates -------------------------------------------------------------
+  //
+  // The channel lives in the same settings table as every other preference, so
+  // it survives a restart and the engine process is the one place that reads
+  // it. `busy` is what the renderer told us about a run in flight: the main
+  // process cannot see the engine's state, and asking across two hops to
+  // answer a button press would make the button feel broken.
+  ipcMain.handle(
+    CHANNELS.updateState,
+    guard(async () => {
+      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
+      return { version: currentVersion(), channel: prefs.updateChannel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(CHANNELS.updateCheck, guard(() => checkNow()));
+  ipcMain.handle(CHANNELS.updateDownload, guard(() => downloadUpdate()));
+  ipcMain.handle(CHANNELS.updateInstall, guard(async () => installUpdate(() => !busy)));
+  ipcMain.handle(
+    CHANNELS.updateChannel,
+    guard(async (payload) => {
+      const { channel } = updateChannelSchema.parse(payload);
+      setChannel(channel);
+      await ask({ type: "setUpdateChannel", channel });
+      return { version: currentVersion(), channel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(
+    CHANNELS.busy,
+    guard(async (payload) => {
+      busy = busySchema.parse(payload).busy;
+      return { busy };
+    }),
+  );
+
+  /**
+   * A native confirmation, not a web one.
+   *
+   * This deletes files. A `confirm()` in the renderer is a dialog the page
+   * draws for itself; the one the system draws cannot be styled to look like
+   * something harmless, defaults to Cancel, and is the sheet a macOS user
+   * already knows how to read.
+   */
+  ipcMain.handle(
+    CHANNELS.purge,
+    guard(async (payload) => {
+      const { what } = purgeSchema.parse(payload);
+      const everything = what === "everything";
+      const { response } = await dialog.showMessageBox(window as BrowserWindow, {
+        type: "warning",
+        buttons: ["Cancel", everything ? "Delete everything" : "Delete extractions"],
+        defaultId: 0,
+        cancelId: 0,
+        message: everything ? "Delete everything Lirovo has stored?" : "Delete every extraction?",
+        detail: everything
+          ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
+          : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
+      });
+      if (response !== 1) return { cancelled: true, freedBytes: 0 };
+      const result = (await ask({ type: "purge", what })) as { freedBytes: number };
+      return { cancelled: false, ...result };
+    }),
+  );
+
+  ipcMain.handle(
+    CHANNELS.reveal,
+    guard(async (payload) => {
+      const { path: target } = revealSchema.parse(payload);
+      // Only inside the data directory: the renderer does not get to name an
+      // arbitrary path for the system to open.
+      const { resolvePaths } = await import("@lirovo/node-runtime");
+      const root = resolvePaths().data;
+      const resolved = path.resolve(target);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return { revealed: false };
+      shell.showItemInFolder(resolved);
+      return { revealed: true };
+    }),
+  );
+
+  ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
+  ipcMain.handle(
+    CHANNELS.setDefaultBackend,
+    guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),
   );
 
   ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));

@@ -149,8 +149,15 @@ export const ingest = async (input: IngestInput, deps: IngestDeps): Promise<Inge
   }
 
   const probe = await probeMedia(deps.exec, deps.ffprobe, mediaPath).catch((error: unknown) => {
-    if (error instanceof LirovoError) throw error;
-    throw new LirovoError("PROBE_FAILED", error instanceof Error ? error.message : String(error), { stage: "ingest" });
+    // Only the two that mean "the user stopped this" survive as themselves.
+    // Everything else — including the exec wrapper's own INTERNAL for a
+    // non-zero exit — is a file ffprobe would not read, and saying INTERNAL
+    // about a corrupt download blames the app for the file.
+    if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT")) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new LirovoError("PROBE_FAILED", `ffprobe could not read ${path.basename(mediaPath)}: ${detail}`, {
+      stage: "ingest",
+    });
   });
 
   if (!probe.hasAudio && !probe.hasVideo) {

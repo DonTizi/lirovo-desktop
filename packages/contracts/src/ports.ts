@@ -122,8 +122,24 @@ export interface BackendCapabilities {
   readonly spawnsProcessPerCall: boolean;
 }
 
+/**
+ * The one thing a user would do to turn something on, and the command that
+ * does it.
+ *
+ * Carried by the thing itself rather than assembled by whatever draws the
+ * screen: the CLI and the app must not disagree about how yt-dlp is installed,
+ * and only the probe knows whether this machine got it from Homebrew.
+ */
+export interface Fix {
+  /** "Install" | "Update" | "Start" — the verb, for a button. */
+  readonly label: string;
+  readonly command: string;
+}
+
 export interface InferenceBackend {
   readonly id: string;
+  /** How a user turns this backend on. Null when nothing can be automated. */
+  readonly setup: Fix | null;
   readonly capabilities: BackendCapabilities;
   /** Probed, never hardcoded: external CLI flags change between releases. */
   detect(): Promise<{ available: boolean; version: string | null; reason?: string }>;

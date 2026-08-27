@@ -148,24 +148,33 @@ const applyPragmas = (db: Db): void => {
  * inside the same transaction as the statements it describes.
  */
 export const migrate = (db: Db): number => {
-  const current = (db.pragma("user_version", { simple: true }) as number | undefined) ?? 0;
-  let applied = current;
+  let applied = 0;
 
-  for (const migration of MIGRATIONS) {
-    if (migration.version <= applied) continue;
-    const run = db.transaction(() => {
+  // The version is read INSIDE the write transaction, not before it.
+  //
+  // Reading first leaves a window: the CLI and the app can both open a v1
+  // database, both see 1, and both decide to apply migration 2. The first
+  // commits; the second then runs `CREATE TABLE settings` against a database
+  // that already has it and fails on a machine where nothing is wrong. Taking
+  // the write lock first makes the check and the apply one atomic step, and
+  // the loser simply finds the version already current and does nothing.
+  const run = db.transaction(() => {
+    applied = (db.pragma("user_version", { simple: true }) as number | undefined) ?? 0;
+    for (const migration of MIGRATIONS) {
+      if (migration.version <= applied) continue;
       for (const statement of migration.statements) db.exec(statement);
       db.pragma(`user_version = ${migration.version}`);
-    });
-    try {
-      run.immediate();
-    } catch (error) {
-      throw new LirovoError(
-        "MIGRATION_FAILED",
-        `migration ${migration.version} failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      applied = migration.version;
     }
-    applied = migration.version;
+  });
+
+  try {
+    run.immediate();
+  } catch (error) {
+    throw new LirovoError(
+      "MIGRATION_FAILED",
+      `migration failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return applied;
 };

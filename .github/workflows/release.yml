@@ -1,0 +1,227 @@
+# Build, sign, notarise and publish, into the release that triggered this.
+#
+# One workflow serves both channels, and the channel is set EXPLICITLY.
+#
+# electron-builder does not infer it from a prerelease version when the
+# provider is `github` — verified by building `0.0.1-beta.1`, which wrote
+# `latest-mac.yml`. Left implicit, publishing a preview would overwrite the
+# stable feed and hand a beta to every stable user, which is worse than a beta
+# channel that never worked.
+name: release
+
+on:
+  release:
+    types: [published]
+
+# `concurrency` does NOT serialise the jobs of one matrix — they are children
+# of a single workflow run and share its group. Two of them publishing into the
+# same release therefore overwrite each other's `latest-mac.yml` and one
+# architecture vanishes from the feed. So the matrix builds and verifies
+# without publishing, and a single job afterwards uploads both.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: ${{ matrix.arch }}
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    # The signing secrets live in this environment, not on the repository. Two
+    # things follow, and both matter more in a public repo:
+    #
+    #   No other workflow can read them, however it got onto main. A job has to
+    #   name this environment, and the only job that does is this one.
+    #
+    #   Configure it with a required reviewer and every signed build waits for a
+    #   person. The certificate can sign anything as its owner, so the question
+    #   worth a human is not "is this version right" but "did I intend to run
+    #   the code that is about to hold my Developer ID".
+    environment: release
+
+    strategy:
+      # Not fail-fast: nothing is published until both architectures have
+      # finished, so letting the second one run costs nothing and means a
+      # notarisation timeout on one arch still leaves the other's log — and its
+      # artifact — to re-run against rather than rebuild from scratch.
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The tag, not the branch: a release cut from an older commit must
+          # build that commit.
+          ref: ${{ github.event.release.tag_name }}
+          # By default checkout leaves a repo-write token in .git/config, where
+          # every later step — including a dependency's build script — can read
+          # it. Publishing gets its token explicitly, further down.
+          persist-credentials: false
+
+      # No `version:` here on purpose. `packageManager` in the root
+      # package.json is the single source, and this action fails outright when
+      # both name a version — which is exactly how it failed.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Per target arch, never the host's. The runners are arm64, so without
+      # the flag the x64 DMG would carry arm64 tools — which happened once, and
+      # built green. The afterPack hook now refuses it, but the flag is what
+      # stops it being refused in the first place.
+      - name: collect the bundled tools
+        run: pnpm --filter lirovo-desktop exec node scripts/collect-binaries.mjs --${{ matrix.arch }}
+
+      # Through turbo: the filter form skips the workspace packages this
+      # depends on, and the desktop typecheck then cannot resolve any of them.
+      - run: pnpm turbo run build --filter=lirovo-desktop
+
+      # The tag and the version have to agree, or the release advertises one
+      # number and the feed inside it carries another — and a client that
+      # trusts the feed installs something nobody named.
+      - name: the tag must match the version being built
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::release tag $TAG does not match apps/desktop version $VERSION"
+            exit 1
+          fi
+          echo "tag $TAG matches version $VERSION"
+
+      - name: sign and notarise
+        env:
+          # The Developer ID certificate, base64 of the .p12.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # notarytool credentials. An app-specific password, not the account's.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # electron-builder publishes to the repo this ran in.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `beta` for a prerelease, `latest` otherwise. GitHub's own flag
+          # decides, so the channel cannot drift from what the release says it
+          # is.
+          CHANNEL=$([ "${{ github.event.release.prerelease }}" = "true" ] && echo beta || echo latest)
+          echo "building for the $CHANNEL channel"
+          pnpm --filter lirovo-desktop exec electron-builder \
+            --mac --${{ matrix.arch }} \
+            --publish never \
+            -c.publish.channel="$CHANNEL"
+
+      # Signing is not optional here. Without the certificate electron-builder
+      # skips it with a warning and the build stays green, which is how an
+      # unsigned DMG reaches a release.
+      - name: the app must actually be signed
+        run: |
+          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
+          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::$APP is not signed with a Developer ID"; exit 1; }
+
+      # Proof, in the log, before anything is public. Cheap, and the only place
+      # anyone will look after a Gatekeeper complaint.
+      - name: verify the signature and the notarisation
+        run: |
+          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
+          echo "── the app itself"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Signature|flags"
+          echo "── every bundled tool"
+          for tool in "$APP"/Contents/Resources/bin/*; do
+            printf '%-14s ' "$(basename "$tool")"
+            codesign -dv "$tool" 2>&1 | grep -c Authority | tr -d '\n'
+            echo " authorities · $(file -b "$tool" | head -c 48)"
+          done
+          echo "── Gatekeeper's own verdict"
+          spctl -a -vvv -t install "$APP"
+
+      # Verified, then kept for the publisher below.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+          if-no-files-found: error
+
+  # One publisher, after both architectures have been built AND verified. A
+  # failed check now means nothing was ever public, rather than one signed
+  # artifact already downloadable and the other missing.
+  publish-release:
+    name: publish
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      # The merge script and the lockfile live in the repo, and this job runs
+      # both. Without this it fails on the first command with no package.json.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      # NOT `merge-multiple: true`. Each architecture wrote a complete
+      # `latest-mac.yml` naming only its own two files, under the same name;
+      # merging the directories would let one silently overwrite the other and
+      # take that architecture out of the update feed.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: dist-arm64, path: dist/arm64 }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: dist-x64, path: dist/x64 }
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22 }
+      - run: pnpm install --frozen-lockfile
+
+      # One feed listing all four files. electron-builder does this itself
+      # when it builds both architectures in one invocation; two runners
+      # cannot, because neither knows the other exists.
+      - name: merge the per-architecture update feeds
+        run: |
+          mkdir -p dist/merged
+          node apps/desktop/scripts/merge-update-feeds.mjs dist/merged dist/arm64 dist/x64
+
+      - name: the feed must name both architectures
+        run: |
+          FEED=$(ls dist/merged/*-mac.yml)
+          echo "── $FEED"; cat "$FEED"
+          grep -E "^ *- url:" "$FEED" | grep -q  "arm64" \
+            || { echo "::error::no arm64 build in the update feed"; exit 1; }
+          grep -E "^ *- url:" "$FEED" | grep -qv "arm64" \
+            || { echo "::error::no x64 build in the update feed"; exit 1; }
+
+      - name: upload every artifact to the release that triggered this
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # An unmatched glob is passed through as a literal, and `gh` then
+          # fails on a filename with a `*` in it — a confusing way to learn
+          # that a build produced nothing.
+          shopt -s nullglob
+          FILES=(dist/arm64/*.dmg dist/arm64/*.zip dist/arm64/*.blockmap
+                 dist/x64/*.dmg dist/x64/*.zip dist/x64/*.blockmap)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::no artifacts to publish"; exit 1
+          fi
+          printf 'uploading %s\n' "${FILES[@]}"
+          gh release upload "${{ github.event.release.tag_name }}" "${FILES[@]}" \
+            --repo "${{ github.repository }}" --clobber
+
+          # The merged feed last, so a per-arch one can never land on top of it.
+          gh release upload "${{ github.event.release.tag_name }}" dist/merged/*-mac.yml \
+            --repo "${{ github.repository }}" --clobber
