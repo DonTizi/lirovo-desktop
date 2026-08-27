@@ -3728,7 +3728,7 @@ const numberType = ZodNumber.create;
 const booleanType = ZodBoolean.create;
 const unknownType = ZodUnknown.create;
 ZodNever.create;
-ZodArray.create;
+const arrayType = ZodArray.create;
 const objectType = ZodObject.create;
 ZodUnion.create;
 const discriminatedUnionType = ZodDiscriminatedUnion.create;
@@ -3891,10 +3891,24 @@ objectType({
 const extractRequestSchema = objectType({
   source: stringType().min(1),
   schemaJson: stringType().nullable(),
-  backendId: stringType().nullable()
+  backendId: stringType().nullable(),
+  /** Which stored revision this run was asked with, when it came from one. */
+  schemaRevisionId: stringType().nullable().optional()
 });
 const runIdSchema = objectType({ runId: stringType().min(1) });
 const inspectRequestSchema = objectType({ source: stringType().min(1) });
+const fieldSpecSchema = objectType({
+  name: stringType(),
+  kind: enumType(["text", "list", "number", "date"]),
+  description: stringType().optional()
+});
+const saveSchemaRequestSchema = objectType({
+  schemaId: stringType().optional(),
+  name: stringType().min(1),
+  description: stringType().optional(),
+  fields: arrayType(fieldSpecSchema)
+});
+const schemaIdSchema = objectType({ schemaId: stringType().min(1) });
 discriminatedUnionType("kind", [
   objectType({ kind: literalType("event"), event: pipelineEventSchema }),
   objectType({ kind: literalType("done"), runId: stringType(), summary: unknownType() }),
@@ -3912,6 +3926,10 @@ const CHANNELS = {
   listRuns: "lirovo:list-runs",
   pickFile: "lirovo:pick-file",
   inspect: "lirovo:inspect",
+  listSchemas: "lirovo:list-schemas",
+  saveSchema: "lirovo:save-schema",
+  schemaRevisions: "lirovo:schema-revisions",
+  archiveSchema: "lirovo:archive-schema",
   engineEvent: "lirovo:engine-event"
 };
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -4003,6 +4021,19 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.inspect,
     guard((payload) => ask({ type: "inspect", source: inspectRequestSchema.parse(payload).source }))
+  );
+  ipcMain.handle(CHANNELS.listSchemas, guard(() => ask({ type: "listSchemas" })));
+  ipcMain.handle(
+    CHANNELS.saveSchema,
+    guard((payload) => ask({ type: "saveSchema", input: saveSchemaRequestSchema.parse(payload) }))
+  );
+  ipcMain.handle(
+    CHANNELS.schemaRevisions,
+    guard((payload) => ask({ type: "schemaRevisions", schemaId: schemaIdSchema.parse(payload).schemaId }))
+  );
+  ipcMain.handle(
+    CHANNELS.archiveSchema,
+    guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId }))
   );
   ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));
   ipcMain.handle(

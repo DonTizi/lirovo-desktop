@@ -1,128 +1,111 @@
-import { motion } from "framer-motion";
-import { Plus, X } from "lucide-react";
-import { SCHEMA_PRESETS, compileSchema, type FieldKind, type FieldSpec } from "@lirovo/core";
+import { useEffect, useState } from "react";
+import { SCHEMA_PRESETS, compileSchema, fieldsFingerprint, type FieldSpec } from "@lirovo/core";
+import type { SchemaSummary } from "@lirovo/node-runtime";
+import { FieldRows } from "./FieldRows";
 import { cn } from "../lib/cn";
 
-const KIND_LABEL: Record<FieldKind, string> = {
-  text: "Text",
-  list: "List",
-  number: "Number",
-  date: "Date",
-};
-
-const sameFields = (a: readonly FieldSpec[], b: readonly FieldSpec[]): boolean =>
-  a.length === b.length && a.every((f, i) => f.name === b[i]?.name && f.kind === b[i]?.kind);
+const same = (a: readonly FieldSpec[], b: readonly FieldSpec[]): boolean =>
+  fieldsFingerprint(a) === fieldsFingerprint(b);
 
 /**
- * What to pull out of the video, described as fields.
+ * What to pull out of this video.
  *
- * The previous version of this put a JSON Schema document in a textarea, which
- * is the correct contract and the wrong thing to hand someone: it reads as
- * debug output, and it asks a person to know draft-2020-12 before they can
- * extract anything.
- *
- * So: four starting points, then rows you can rename and retype. The schema is
- * compiled from them, and stays reachable under a disclosure for anyone who
- * actually wants to read it.
+ * Saved schemas come first because they are the ones with descriptions someone
+ * has already refined; the presets are starting points for a first run. Editing
+ * here changes THIS run only — a schema is revised where it lives, on the
+ * Schemas tab, so an edit made in passing cannot silently rewrite the contract
+ * every earlier run pointed at.
  */
 export function SchemaPicker({
   fields,
   onChange,
+  onPickSaved,
+  onManage,
 }: {
   fields: readonly FieldSpec[];
   onChange: (fields: FieldSpec[]) => void;
+  onPickSaved: (revisionId: string | null) => void;
+  onManage: () => void;
 }): JSX.Element {
-  const setField = (index: number, patch: Partial<FieldSpec>): void =>
-    onChange(fields.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  const [saved, setSaved] = useState<SchemaSummary[]>([]);
+
+  useEffect(() => {
+    void window.lirovo.listSchemas().then((answer) => {
+      if (answer.ok) setSaved(answer.value);
+    });
+  }, []);
+
+  const chip = (active: boolean): string =>
+    cn(
+      "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+      active ? "bg-ink-strong text-ink-inverse" : "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong",
+    );
 
   return (
     <div className="mt-6">
-      <p className="text-ink-label mb-2 text-center text-xs uppercase tracking-wide">What should it pull out?</p>
+      <div className="mb-2 flex items-center justify-center gap-2">
+        <p className="text-ink-label text-xs uppercase tracking-wide">What should it pull out?</p>
+        <button className="text-ink-subtle hover:text-ink text-[11px] transition-colors" onClick={onManage}>
+          Manage schemas
+        </button>
+      </div>
 
       <div className="mb-3 flex flex-wrap justify-center gap-2">
-        {SCHEMA_PRESETS.map((preset) => {
-          const active = sameFields(fields, preset.fields);
-          return (
-            <button
-              key={preset.id}
-              onClick={() => onChange([...preset.fields])}
-              title={preset.about}
-              className={cn(
-                "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                active
-                  ? "bg-ink-strong text-ink-inverse"
-                  : "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong",
-              )}
-            >
-              {preset.label}
-            </button>
-          );
-        })}
+        {saved.map((s) => (
+          <button
+            key={s.id}
+            title={s.description ?? undefined}
+            className={chip(false)}
+            onClick={async () => {
+              const answer = await window.lirovo.schemaRevisions(s.id);
+              if (!answer.ok) return;
+              const current = answer.value.find((r) => r.published) ?? answer.value[0];
+              if (current === undefined) return;
+              onChange([...current.fields]);
+              onPickSaved(current.id);
+            }}
+          >
+            {s.name}
+            <span className="text-ink-subtle ml-1.5">v{s.version}</span>
+          </button>
+        ))}
+
+        {SCHEMA_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            title={preset.about}
+            className={chip(same(fields, preset.fields))}
+            onClick={() => {
+              onChange([...preset.fields]);
+              onPickSaved(null);
+            }}
+          >
+            {preset.label}
+          </button>
+        ))}
+
         <button
-          onClick={() => onChange([])}
-          className={cn(
-            "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-            fields.length === 0
-              ? "bg-ink-strong text-ink-inverse"
-              : "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong",
-          )}
+          className={chip(fields.length === 0)}
           title="Transcribe and detect scenes, without filling any fields"
+          onClick={() => {
+            onChange([]);
+            onPickSaved(null);
+          }}
         >
           Transcript only
         </button>
       </div>
 
-      <div className="bg-base shadow-ring overflow-hidden rounded-lg">
-        {fields.length === 0 ? (
-          <p className="text-ink-subtle px-4 py-4 text-center text-xs">
-            No fields. The video will be transcribed and its scenes detected, and nothing will be filled in.
-          </p>
-        ) : (
-          fields.map((field, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.14, ease: [0.2, 0, 0, 1] }}
-              className="border-hairline flex items-center gap-2 border-b px-3 py-2 last:border-b-0"
-            >
-              <input
-                className="text-ink placeholder:text-ink-placeholder min-w-0 flex-1 border-0 bg-transparent text-sm outline-none"
-                placeholder="Field name"
-                value={field.name}
-                onChange={(e) => setField(index, { name: e.target.value })}
-                spellCheck={false}
-              />
-              <select
-                className="bg-tint text-ink-label focus:ring-brand/20 rounded px-2 py-1 text-xs outline-none focus:ring-2"
-                value={field.kind}
-                onChange={(e) => setField(index, { kind: e.target.value as FieldKind })}
-              >
-                {(Object.keys(KIND_LABEL) as FieldKind[]).map((kind) => (
-                  <option key={kind} value={kind}>
-                    {KIND_LABEL[kind]}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="text-ink-subtle hover:text-danger-text rounded p-1 transition-colors"
-                onClick={() => onChange(fields.filter((_, i) => i !== index))}
-                aria-label={`Remove ${field.name || "this field"}`}
-              >
-                <X className="size-3.5" />
-              </button>
-            </motion.div>
-          ))
-        )}
-
-        <button
-          className="border-hairline text-ink-subtle hover:bg-elevated hover:text-ink flex w-full items-center justify-center gap-1.5 border-t px-3 py-2 text-xs transition-colors"
-          onClick={() => onChange([...fields, { name: "", kind: "text" }])}
-        >
-          <Plus className="size-3.5" />
-          Add a field
-        </button>
-      </div>
+      <FieldRows
+        fields={fields}
+        onChange={(next) => {
+          onChange(next);
+          // Edited in place, so it is no longer the stored revision — saying it
+          // was would attach this run to a contract it did not use.
+          onPickSaved(null);
+        }}
+        emptyNote="No fields. The video will be transcribed and its scenes detected, and nothing will be filled in."
+      />
 
       {fields.length > 0 && (
         <details className="mt-2">

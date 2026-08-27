@@ -9,6 +9,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
 import { SchemaPicker } from "./components/SchemaPicker";
+import { SchemasPage } from "./components/SchemasPage";
 import { cn } from "./lib/cn";
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -114,6 +115,9 @@ export const App = (): JSX.Element => {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
   const [fields, setFields] = useState<FieldSpec[]>([...(SCHEMA_PRESETS[0]?.fields ?? [])]);
+  // Set only while the fields are exactly a stored revision, so a run can point
+  // at the contract it was actually asked with.
+  const [revisionId, setRevisionId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +171,7 @@ export const App = (): JSX.Element => {
       // No fields means transcribe and detect scenes, and fill nothing in.
       schemaJson: fields.length === 0 ? null : JSON.stringify(compileSchema(fields)),
       backendId: null,
+      schemaRevisionId: revisionId,
     });
     setRunning(false);
     void loadRuns();
@@ -250,6 +255,7 @@ export const App = (): JSX.Element => {
   const sections: NavTab[] = [
     { id: "overview", label: "Overview" },
     { id: "library", label: "Library", count: runs.length },
+    { id: "schemas", label: "Schemas" },
   ];
   const runTabs: NavTab[] = [...open.values()].map((r) => ({
     id: r.runId,
@@ -337,7 +343,12 @@ export const App = (): JSX.Element => {
                   <p className="border-hairline text-danger-text mt-3 border-t px-1 py-3 font-mono text-xs">{error}</p>
                 )}
 
-                <SchemaPicker fields={fields} onChange={setFields} />
+                <SchemaPicker
+                  fields={fields}
+                  onChange={setFields}
+                  onPickSaved={setRevisionId}
+                  onManage={() => setTab("schemas")}
+                />
               </div>
 
               <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -378,6 +389,8 @@ export const App = (): JSX.Element => {
               </div>
             </>
           )}
+
+          {tab === "schemas" && <SchemasPage />}
 
           {tab === "library" && (
             <Card>

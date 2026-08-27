@@ -12,6 +12,8 @@ export const extractRequestSchema = z.object({
   source: z.string().min(1),
   schemaJson: z.string().nullable(),
   backendId: z.string().nullable(),
+  /** Which stored revision this run was asked with, when it came from one. */
+  schemaRevisionId: z.string().nullable().optional(),
 });
 export type ExtractRequest = z.infer<typeof extractRequestSchema>;
 
@@ -19,6 +21,21 @@ export const runIdSchema = z.object({ runId: z.string().min(1) });
 
 /** Look at a source without ingesting it, so the field can say what it understood. */
 export const inspectRequestSchema = z.object({ source: z.string().min(1) });
+
+export const fieldSpecSchema = z.object({
+  name: z.string(),
+  kind: z.enum(["text", "list", "number", "date"]),
+  description: z.string().optional(),
+});
+
+export const saveSchemaRequestSchema = z.object({
+  schemaId: z.string().optional(),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  fields: z.array(fieldSpecSchema),
+});
+
+export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
 export interface SourceInspection {
   readonly kind: "url" | "file";
@@ -51,6 +68,10 @@ export const CHANNELS = {
   listRuns: "lirovo:list-runs",
   pickFile: "lirovo:pick-file",
   inspect: "lirovo:inspect",
+  listSchemas: "lirovo:list-schemas",
+  saveSchema: "lirovo:save-schema",
+  schemaRevisions: "lirovo:schema-revisions",
+  archiveSchema: "lirovo:archive-schema",
   engineEvent: "lirovo:engine-event",
 } as const;
 

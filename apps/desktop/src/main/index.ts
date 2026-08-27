@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
-import { CHANNELS, extractRequestSchema, inspectRequestSchema, runIdSchema } from "./ipc.js";
+import {
+  CHANNELS,
+  extractRequestSchema,
+  inspectRequestSchema,
+  runIdSchema,
+  saveSchemaRequestSchema,
+  schemaIdSchema,
+} from "./ipc.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
@@ -133,6 +140,20 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.inspect,
     guard((payload) => ask({ type: "inspect", source: inspectRequestSchema.parse(payload).source })),
+  );
+
+  ipcMain.handle(CHANNELS.listSchemas, guard(() => ask({ type: "listSchemas" })));
+  ipcMain.handle(
+    CHANNELS.saveSchema,
+    guard((payload) => ask({ type: "saveSchema", input: saveSchemaRequestSchema.parse(payload) })),
+  );
+  ipcMain.handle(
+    CHANNELS.schemaRevisions,
+    guard((payload) => ask({ type: "schemaRevisions", schemaId: schemaIdSchema.parse(payload).schemaId })),
+  );
+  ipcMain.handle(
+    CHANNELS.archiveSchema,
+    guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
   );
 
   ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));

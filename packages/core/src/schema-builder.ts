@@ -15,6 +15,19 @@ export type FieldKind = "text" | "list" | "number" | "date";
 export interface FieldSpec {
   readonly name: string;
   readonly kind: FieldKind;
+  /**
+   * What this field MEANS, in words, for the model reading it.
+   *
+   * A name is a label; a description is an instruction. "risks" tells a model
+   * almost nothing — "things the speaker said could go wrong, not things that
+   * already did" tells it where the boundary is. JSON Schema carries this as
+   * `description`, so it travels to the model with the contract rather than
+   * needing a second channel.
+   */
+  // `| undefined` explicitly: a value parsed from the wire, or built
+  // conditionally, is `string | undefined`, which the narrow spelling rejects
+  // under exactOptionalPropertyTypes.
+  readonly description?: string | undefined;
 }
 
 export interface SchemaPreset {
@@ -24,6 +37,20 @@ export interface SchemaPreset {
   readonly about: string;
   readonly fields: readonly FieldSpec[];
 }
+
+/**
+ * The identity of a schema's CONTENT.
+ *
+ * A rename or a reworded description changes what the model is asked for, so it
+ * has to produce a new revision — two runs labelled with the same schema must
+ * have been asked the same question. Order is part of it because the prompt
+ * renders the fields in order.
+ *
+ * Deliberately not the compiled JSON: that would make a formatting change look
+ * like a semantic one.
+ */
+export const fieldsFingerprint = (fields: readonly FieldSpec[]): string =>
+  fields.map((f) => `${toPropertyName(f.name)}:${f.kind}:${(f.description ?? "").trim()}`).join("\u0000");
 
 /**
  * A property name a JSON Schema can carry and a person can read back.
@@ -62,7 +89,10 @@ export const compileSchema = (fields: readonly FieldSpec[]): Record<string, unkn
   for (const field of fields) {
     const key = toPropertyName(field.name);
     if (key === "" || key in properties) continue;
-    properties[key] = KIND_SCHEMA[field.kind];
+    const described = field.description?.trim() ?? "";
+    // `description` is where the meaning rides along with the contract. The
+    // model reads the schema; it does not read the app.
+    properties[key] = described === "" ? KIND_SCHEMA[field.kind] : { ...KIND_SCHEMA[field.kind], description: described };
     required.push(key);
   }
 
@@ -89,13 +119,16 @@ export const decompileSchema = (schema: unknown): FieldSpec[] | null => {
     if (raw === null || typeof raw !== "object") return null;
     const prop = raw as Record<string, unknown>;
 
-    if (prop["type"] === "string") fields.push({ name: key, kind: "text" });
-    else if (prop["type"] === "number" || prop["type"] === "integer") fields.push({ name: key, kind: "number" });
+    const described = typeof prop["description"] === "string" ? { description: prop["description"] } : {};
+
+    if (prop["type"] === "string") fields.push({ name: key, kind: "text", ...described });
+    else if (prop["type"] === "number" || prop["type"] === "integer")
+      fields.push({ name: key, kind: "number", ...described });
     else if (prop["type"] === "array") {
       const items = prop["items"] as Record<string, unknown> | undefined;
       // A list of anything but plain strings is beyond what the builder shows.
       if (items?.["type"] !== "string") return null;
-      fields.push({ name: key, kind: "list" });
+      fields.push({ name: key, kind: "list", ...described });
     } else return null;
   }
   return fields;
@@ -113,9 +146,13 @@ export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
     label: "Talk or lecture",
     about: "what it covered, and what was claimed",
     fields: [
-      { name: "title", kind: "text" },
-      { name: "topics", kind: "list" },
-      { name: "key claims", kind: "list" },
+      { name: "title", kind: "text", description: "what this talk is about, in one line" },
+      { name: "topics", kind: "list", description: "the subjects covered, in the order they were addressed" },
+      {
+        name: "key claims",
+        kind: "list",
+        description: "statements the speaker asserted as fact, not questions or opinions they attributed to others",
+      },
     ],
   },
   {
@@ -123,10 +160,14 @@ export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
     label: "Meeting",
     about: "what was decided, and who owns it",
     fields: [
-      { name: "summary", kind: "text" },
-      { name: "decisions", kind: "list" },
-      { name: "action items", kind: "list" },
-      { name: "risks", kind: "list" },
+      { name: "summary", kind: "text", description: "what this meeting was for and what came out of it" },
+      { name: "decisions", kind: "list", description: "things settled in the meeting, not options still being weighed" },
+      { name: "action items", kind: "list", description: "work someone committed to, with the owner when it was named" },
+      {
+        name: "risks",
+        kind: "list",
+        description: "things someone said could go wrong, not things that already did",
+      },
     ],
   },
   {
@@ -134,9 +175,9 @@ export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
     label: "Product demo",
     about: "what was shown on screen",
     fields: [
-      { name: "product", kind: "text" },
-      { name: "features shown", kind: "list" },
-      { name: "tools shown", kind: "list" },
+      { name: "product", kind: "text", description: "the product being demonstrated" },
+      { name: "features shown", kind: "list", description: "capabilities actually demonstrated on screen, not merely mentioned" },
+      { name: "tools shown", kind: "list", description: "named software visible on screen during the demo" },
     ],
   },
   {
@@ -144,9 +185,9 @@ export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
     label: "Interview",
     about: "who said what, and what they asked for",
     fields: [
-      { name: "summary", kind: "text" },
-      { name: "quotes", kind: "list" },
-      { name: "requests", kind: "list" },
+      { name: "summary", kind: "text", description: "what the person interviewed was asked about, and what they conveyed" },
+      { name: "quotes", kind: "list", description: "sentences worth reproducing verbatim, copied exactly as spoken" },
+      { name: "requests", kind: "list", description: "things the person asked for or said they needed" },
     ],
   },
 ];

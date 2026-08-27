@@ -14,6 +14,7 @@ import {
   buildMediaStages,
   createFsArtifactStore,
   createRunStore,
+  createSchemaStore,
   createStageLedger,
   isUrl,
   makeAsrProbe,
@@ -28,6 +29,10 @@ import {
   sourceTypeOf,
 } from "@lirovo/node-runtime";
 import type { ExtractRequest, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
+import type { z } from "zod";
+import type { saveSchemaRequestSchema } from "./ipc.js";
+
+type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
 
 /**
  * The engine, in its own process.
@@ -46,7 +51,11 @@ type Inbound =
   | { id: string; type: "doctor" }
   | { id: string; type: "listRuns" }
   | { id: string; type: "runDetail"; runId: string }
-  | { id: string; type: "inspect"; source: string };
+  | { id: string; type: "inspect"; source: string }
+  | { id: string; type: "listSchemas" }
+  | { id: string; type: "saveSchema"; input: SaveSchemaRequest }
+  | { id: string; type: "schemaRevisions"; schemaId: string }
+  | { id: string; type: "archiveSchema"; schemaId: string };
 
 type Outbound =
   | { kind: "event"; event: PipelineEvent }
@@ -222,7 +231,9 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
       ledger: createStageLedger(runs, runId),
       onIngested: (manifest: SourceManifest) => {
         const sourceId = runs.upsertSource(manifest, request.source);
-        runs.createRun(runId, sourceId, null, owner);
+        // The revision is what makes the result explainable later: without it a
+        // run cannot say what it was asked for.
+        runs.createRun(runId, sourceId, request.schemaRevisionId ?? null, owner);
       },
     };
 
@@ -296,6 +307,17 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return runDetail(message.runId);
     case "inspect":
       return inspect(message.source);
+    case "listSchemas":
+      return withDb((db) => createSchemaStore(db).list());
+    case "saveSchema":
+      return withDb((db) => createSchemaStore(db).save(message.input));
+    case "schemaRevisions":
+      return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
+    case "archiveSchema":
+      return withDb((db) => {
+        createSchemaStore(db).archive(message.schemaId);
+        return { archived: true };
+      });
   }
 };
 

@@ -4435,6 +4435,57 @@ const selectFrames = (kept, all, budget) => {
   }
   return [...buckets.values()].sort((a, b) => a.t_ms - b.t_ms);
 };
+const fieldsFingerprint = (fields) => fields.map((f) => `${toPropertyName(f.name)}:${f.kind}:${(f.description ?? "").trim()}`).join("\0");
+const toPropertyName = (label) => label.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+const KIND_SCHEMA = {
+  text: { type: "string" },
+  list: { type: "array", items: { type: "string" } },
+  number: { type: "number" },
+  date: { type: "string" }
+};
+const compileSchema = (fields) => {
+  var _a;
+  const properties = {};
+  const required = [];
+  for (const field of fields) {
+    const key = toPropertyName(field.name);
+    if (key === "" || key in properties)
+      continue;
+    const described = ((_a = field.description) == null ? void 0 : _a.trim()) ?? "";
+    properties[key] = described === "" ? KIND_SCHEMA[field.kind] : { ...KIND_SCHEMA[field.kind], description: described };
+    required.push(key);
+  }
+  return { type: "object", additionalProperties: false, required, properties };
+};
+const decompileSchema = (schema) => {
+  if (schema === null || typeof schema !== "object")
+    return null;
+  const node = schema;
+  if (node["type"] !== "object")
+    return null;
+  const properties = node["properties"];
+  if (properties === null || typeof properties !== "object")
+    return null;
+  const fields = [];
+  for (const [key, raw] of Object.entries(properties)) {
+    if (raw === null || typeof raw !== "object")
+      return null;
+    const prop = raw;
+    const described = typeof prop["description"] === "string" ? { description: prop["description"] } : {};
+    if (prop["type"] === "string")
+      fields.push({ name: key, kind: "text", ...described });
+    else if (prop["type"] === "number" || prop["type"] === "integer")
+      fields.push({ name: key, kind: "number", ...described });
+    else if (prop["type"] === "array") {
+      const items = prop["items"];
+      if ((items == null ? void 0 : items["type"]) !== "string")
+        return null;
+      fields.push({ name: key, kind: "list", ...described });
+    } else
+      return null;
+  }
+  return fields;
+};
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1e3;
 const realExec = (bin, args, opts = {}) => new Promise((resolve, reject) => {
   var _a;
@@ -7388,7 +7439,7 @@ const buildMediaStages = async (deps) => {
     }
   };
 };
-const sha256$1 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const sha256$2 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const createFsArtifactStore = (root) => {
   const dirFor = (runId) => path.join(root, runId);
   const full = (runId, relPath) => path.join(dirFor(runId), relPath);
@@ -7411,13 +7462,13 @@ const createFsArtifactStore = (root) => {
     async put(runId, relPath, body) {
       const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
       await writeAtomic(full(runId, relPath), (tmp) => writeFile(tmp, bytes));
-      return { sha256: sha256$1(bytes), bytes: bytes.byteLength };
+      return { sha256: sha256$2(bytes), bytes: bytes.byteLength };
     },
     async putFile(runId, relPath, absSourcePath) {
       const target = full(runId, relPath);
       await writeAtomic(target, (tmp) => copyFile(absSourcePath, tmp));
       const bytes = await readFile(target);
-      return { sha256: sha256$1(bytes), bytes: bytes.byteLength };
+      return { sha256: sha256$2(bytes), bytes: bytes.byteLength };
     },
     async get(runId, relPath) {
       try {
@@ -7440,7 +7491,7 @@ const createFsArtifactStore = (root) => {
     },
     async verify(runId, relPath, expected) {
       const bytes = await this.get(runId, relPath);
-      return bytes !== null && sha256$1(bytes) === expected;
+      return bytes !== null && sha256$2(bytes) === expected;
     },
     async remove(runId) {
       const dir = dirFor(runId);
@@ -7736,8 +7787,8 @@ const openDatabase = (dbPath) => {
   return db;
 };
 const LEASE_MS = 6e4;
-const nowS$1 = () => Math.floor(Date.now() / 1e3);
-const newId$1 = (kind) => makeId(kind, randomBytes(10));
+const nowS$2 = () => Math.floor(Date.now() / 1e3);
+const newId$2 = (kind) => makeId(kind, randomBytes(10));
 const createRunStore = (db) => ({
   upsertSource(manifest, uri2) {
     if (manifest.content_sha256 !== null) {
@@ -7745,13 +7796,13 @@ const createRunStore = (db) => ({
       if (existing !== void 0)
         return existing.id;
     }
-    const id = newId$1("source");
+    const id = newId$2("source");
     db.prepare(`INSERT INTO sources (id, kind, uri, content_sha256, title, duration_s, has_audio, has_video, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, manifest.source_type === "file" ? "file" : "url", uri2, manifest.content_sha256, manifest.title, manifest.duration_s, manifest.has_audio ? 1 : 0, manifest.has_video ? 1 : 0, nowS$1());
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, manifest.source_type === "file" ? "file" : "url", uri2, manifest.content_sha256, manifest.title, manifest.duration_s, manifest.has_audio ? 1 : 0, manifest.has_video ? 1 : 0, nowS$2());
     return id;
   },
   createRun(id, sourceId, schemaRevisionId, owner) {
-    const at = nowS$1();
+    const at = nowS$2();
     db.prepare(`INSERT INTO runs (id, source_id, schema_revision_id, status, lease_owner, lease_expires_at, created_at, started_at)
        VALUES (?, ?, ?, 'running', ?, ?, ?, ?)`).run(id, sourceId, schemaRevisionId, owner, at + Math.floor(LEASE_MS / 1e3), at, at);
     const run = this.getRun(id);
@@ -7762,21 +7813,21 @@ const createRunStore = (db) => ({
   claim(runId, owner) {
     db.prepare(`UPDATE run_stage_attempts
           SET status = 'failed', error_code = 'INTERRUPTED', error_message = 'the process died mid-stage', finished_at = ?
-        WHERE run_id = ? AND status = 'running'`).run(nowS$1(), runId);
+        WHERE run_id = ? AND status = 'running'`).run(nowS$2(), runId);
     const result = db.prepare(`UPDATE runs
             SET status = 'running', lease_owner = ?, lease_expires_at = ?, started_at = COALESCE(started_at, ?)
           WHERE id = ?
             AND status IN ('claimed','running','failed')
-            AND (lease_owner IS NULL OR lease_owner = ? OR lease_expires_at < ?)`).run(owner, nowS$1() + Math.floor(LEASE_MS / 1e3), nowS$1(), runId, owner, nowS$1());
+            AND (lease_owner IS NULL OR lease_owner = ? OR lease_expires_at < ?)`).run(owner, nowS$2() + Math.floor(LEASE_MS / 1e3), nowS$2(), runId, owner, nowS$2());
     return result.changes === 1;
   },
   renewLease(runId, owner) {
-    const result = db.prepare("UPDATE runs SET lease_expires_at = ? WHERE id = ? AND lease_owner = ?").run(nowS$1() + Math.floor(LEASE_MS / 1e3), runId, owner);
+    const result = db.prepare("UPDATE runs SET lease_expires_at = ? WHERE id = ? AND lease_owner = ?").run(nowS$2() + Math.floor(LEASE_MS / 1e3), runId, owner);
     return result.changes === 1;
   },
   finish(runId, status, error) {
     db.prepare(`UPDATE runs SET status = ?, error_code = ?, error_message = ?, finished_at = ?, lease_owner = NULL, lease_expires_at = NULL
-        WHERE id = ?`).run(status, (error == null ? void 0 : error.code) ?? null, (error == null ? void 0 : error.message) ?? null, nowS$1(), runId);
+        WHERE id = ?`).run(status, (error == null ? void 0 : error.code) ?? null, (error == null ? void 0 : error.message) ?? null, nowS$2(), runId);
   },
   setStagePointer(runId, stage) {
     db.prepare("UPDATE runs SET stage_pointer = ? WHERE id = ?").run(stage, runId);
@@ -7785,13 +7836,13 @@ const createRunStore = (db) => ({
     const previous = db.prepare("SELECT COALESCE(MAX(attempt), 0) AS n FROM run_stage_attempts WHERE run_id = ? AND stage = ?").get(runId, stage);
     const attempt = ((previous == null ? void 0 : previous.n) ?? 0) + 1;
     db.prepare(`INSERT INTO run_stage_attempts (run_id, stage, attempt, input_hash, status, started_at)
-       VALUES (?, ?, ?, ?, 'running', ?)`).run(runId, stage, attempt, inputHash, nowS$1());
+       VALUES (?, ?, ?, ?, 'running', ?)`).run(runId, stage, attempt, inputHash, nowS$2());
     return attempt;
   },
   completeAttempt(runId, stage, attempt, outcome) {
     db.prepare(`UPDATE run_stage_attempts
           SET status = ?, output_json = ?, error_code = ?, error_message = ?, finished_at = ?
-        WHERE run_id = ? AND stage = ? AND attempt = ?`).run(outcome.status, outcome.output === void 0 ? null : JSON.stringify(outcome.output), outcome.code ?? null, outcome.message ?? null, nowS$1(), runId, stage, attempt);
+        WHERE run_id = ? AND stage = ? AND attempt = ?`).run(outcome.status, outcome.output === void 0 ? null : JSON.stringify(outcome.output), outcome.code ?? null, outcome.message ?? null, nowS$2(), runId, stage, attempt);
   },
   cachedStageOutput(runId, stage, inputHash) {
     const row = db.prepare(`SELECT output_json FROM run_stage_attempts
@@ -7809,11 +7860,11 @@ const createRunStore = (db) => ({
     db.prepare(`INSERT INTO artifacts (id, run_id, kind, rel_path, sha256, bytes, content_type, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (run_id, rel_path) DO UPDATE SET
-         sha256 = excluded.sha256, bytes = excluded.bytes, created_at = excluded.created_at`).run(newId$1("artifact"), runId, kind, relPath, sha2562, bytes, contentType, nowS$1());
+         sha256 = excluded.sha256, bytes = excluded.bytes, created_at = excluded.created_at`).run(newId$2("artifact"), runId, kind, relPath, sha2562, bytes, contentType, nowS$2());
   }
 });
-const newId = (kind) => makeId(kind, randomBytes(10));
-const nowS = () => Math.floor(Date.now() / 1e3);
+const newId$1 = (kind) => makeId(kind, randomBytes(10));
+const nowS$1 = () => Math.floor(Date.now() / 1e3);
 const persistExtraction = (db, input) => {
   const paths2 = leafPaths(input.data);
   const insertValue = db.prepare(`INSERT INTO extracted_values (observation_id, run_id, field_path, value_json, proposition_key, created_at)
@@ -7838,13 +7889,13 @@ const persistExtraction = (db, input) => {
   let evidenceRows = 0;
   const write = db.transaction(() => {
     for (const path2 of paths2) {
-      const observationId = newId("value");
-      insertValue.run(observationId, input.runId, path2, JSON.stringify(readPath(path2) ?? null), nowS());
+      const observationId = newId$1("value");
+      insertValue.run(observationId, input.runId, path2, JSON.stringify(readPath(path2) ?? null), nowS$1());
       const drafts = input.evidenceByField.get(path2) ?? [];
       if (drafts.length > 0)
         grounded += 1;
       for (const draft of drafts) {
-        const evidenceId = newId("evidence");
+        const evidenceId = newId$1("evidence");
         insertEvidence.run(evidenceId, input.runId, draft.modality, draft.sourceRef, draft.tStart, draft.tEnd, draft.quote, draft.nodeKey);
         linkEvidence.run(observationId, evidenceId);
         evidenceRows += 1;
@@ -7870,6 +7921,76 @@ const createStageLedger = (runs, runId) => ({
     return runs.beginAttempt(runId, stage, inputHash);
   },
   complete: (stage, attempt, outcome) => runs.completeAttempt(runId, stage, attempt, outcome)
+});
+const newId = (kind) => makeId(kind, randomBytes(10));
+const nowS = () => Math.floor(Date.now() / 1e3);
+const sha256$1 = (value) => createHash("sha256").update(value).digest("hex");
+const toRevision = (row, publishedId) => ({
+  id: row.id,
+  schemaId: row.schema_id,
+  version: row.version,
+  fields: decompileSchema(JSON.parse(row.json_schema)) ?? [],
+  changeReason: row.change_reason,
+  createdAt: row.created_at,
+  published: row.id === publishedId
+});
+const createSchemaStore = (db) => ({
+  list: () => db.prepare(`SELECT s.id, s.name, s.description,
+                COALESCE(r.version, 0) AS version,
+                COALESCE(json_array_length(json_extract(r.json_schema, '$.required')), 0) AS fieldCount,
+                COALESCE(r.created_at, s.created_at) AS updatedAt
+           FROM schemas s
+           LEFT JOIN schema_revisions r ON r.id = s.published_revision
+          WHERE s.archived_at IS NULL
+          ORDER BY updatedAt DESC`).all(),
+  revisions(schemaId) {
+    const head = db.prepare("SELECT published_revision FROM schemas WHERE id = ?").get(schemaId);
+    return db.prepare("SELECT * FROM schema_revisions WHERE schema_id = ? ORDER BY version DESC").all(schemaId).map((row) => toRevision(row, (head == null ? void 0 : head.published_revision) ?? null));
+  },
+  published(schemaId) {
+    const row = db.prepare(`SELECT r.* FROM schema_revisions r
+           JOIN schemas s ON s.published_revision = r.id
+          WHERE s.id = ?`).get(schemaId);
+    return row === void 0 ? null : toRevision(row, row.id);
+  },
+  save(input) {
+    const at = nowS();
+    const fingerprint = sha256$1(fieldsFingerprint(input.fields));
+    const json = JSON.stringify(compileSchema(input.fields));
+    let schemaId = input.schemaId;
+    if (schemaId === void 0) {
+      schemaId = newId("schema");
+      db.prepare("INSERT INTO schemas (id, name, description, created_at) VALUES (?, ?, ?, ?)").run(schemaId, input.name, input.description ?? null, at);
+    } else {
+      db.prepare("UPDATE schemas SET name = ?, description = ? WHERE id = ?").run(input.name, input.description ?? null, schemaId);
+    }
+    const existing = db.prepare("SELECT * FROM schema_revisions WHERE schema_id = ? AND schema_sha256 = ? ORDER BY version DESC LIMIT 1").get(schemaId, fingerprint);
+    if (existing !== void 0) {
+      db.prepare("UPDATE schemas SET published_revision = ? WHERE id = ?").run(existing.id, schemaId);
+      return toRevision(existing, existing.id);
+    }
+    const previous = db.prepare("SELECT COALESCE(MAX(version), 0) AS n FROM schema_revisions WHERE schema_id = ?").get(schemaId);
+    const version = ((previous == null ? void 0 : previous.n) ?? 0) + 1;
+    const revisionId = newId("revision");
+    const write = db.transaction(() => {
+      db.prepare(`INSERT INTO schema_revisions (id, schema_id, version, json_schema, schema_sha256, change_reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(revisionId, schemaId, version, json, fingerprint, version === 1 ? "created" : "edited", at);
+      db.prepare("UPDATE schemas SET published_revision = ? WHERE id = ?").run(revisionId, schemaId);
+    });
+    write();
+    return {
+      id: revisionId,
+      schemaId,
+      version,
+      fields: input.fields,
+      changeReason: version === 1 ? "created" : "edited",
+      createdAt: at,
+      published: true
+    };
+  },
+  archive(schemaId) {
+    db.prepare("UPDATE schemas SET archived_at = ? WHERE id = ?").run(nowS(), schemaId);
+  }
 });
 const DEFAULT_WHISPER_MODEL = "ggml-base.en-q5_1.bin";
 const parseWhisperJson = (raw) => {
@@ -9764,6 +9885,7 @@ Rules:
 - Output ONLY a JSON object. No prose, no explanation, no markdown fences.
 - Exactly two top-level keys: "data" and "evidence".
 - "data" must conform to the schema: correct types, every required property present, every enum respected.
+- A field's "description" in the schema is an INSTRUCTION, not a label. It says what belongs in that field and what does not. Where it draws a boundary — asserted rather than asked, committed rather than considered, shown rather than mentioned — honour the boundary. A value that fits the type but breaks the description is wrong.
 - "evidence" is an array of { "field_path": string, "node_id": string }.
   "field_path" is a path into "data" — "title", "decisions[0]", "attendees[2].name".
   "node_id" must be one of the node ids listed in the graph below.
@@ -10208,7 +10330,7 @@ const extract = async (request) => {
       ledger: createStageLedger(runs, runId),
       onIngested: (manifest) => {
         const sourceId = runs.upsertSource(manifest, request.source);
-        runs.createRun(runId, sourceId, null, owner);
+        runs.createRun(runId, sourceId, request.schemaRevisionId ?? null, owner);
       }
     };
     const input = { runId, source: request.source, frameCap: 2e3, signal };
@@ -10270,6 +10392,17 @@ const handle = async (message) => {
       return runDetail(message.runId);
     case "inspect":
       return inspect(message.source);
+    case "listSchemas":
+      return withDb((db) => createSchemaStore(db).list());
+    case "saveSchema":
+      return withDb((db) => createSchemaStore(db).save(message.input));
+    case "schemaRevisions":
+      return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
+    case "archiveSchema":
+      return withDb((db) => {
+        createSchemaStore(db).archive(message.schemaId);
+        return { archived: true };
+      });
   }
 };
 process.parentPort.on("message", (wrapper) => {

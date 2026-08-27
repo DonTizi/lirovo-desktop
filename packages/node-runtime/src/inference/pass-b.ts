@@ -9,6 +9,7 @@ Rules:
 - Output ONLY a JSON object. No prose, no explanation, no markdown fences.
 - Exactly two top-level keys: "data" and "evidence".
 - "data" must conform to the schema: correct types, every required property present, every enum respected.
+- A field's "description" in the schema is an INSTRUCTION, not a label. It says what belongs in that field and what does not. Where it draws a boundary — asserted rather than asked, committed rather than considered, shown rather than mentioned — honour the boundary. A value that fits the type but breaks the description is wrong.
 - "evidence" is an array of { "field_path": string, "node_id": string }.
   "field_path" is a path into "data" — "title", "decisions[0]", "attendees[2].name".
   "node_id" must be one of the node ids listed in the graph below.

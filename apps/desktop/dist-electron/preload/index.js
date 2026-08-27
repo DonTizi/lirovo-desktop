@@ -3725,7 +3725,7 @@ const numberType = ZodNumber.create;
 const booleanType = ZodBoolean.create;
 const unknownType = ZodUnknown.create;
 ZodNever.create;
-ZodArray.create;
+const arrayType = ZodArray.create;
 const objectType = ZodObject.create;
 ZodUnion.create;
 const discriminatedUnionType = ZodDiscriminatedUnion.create;
@@ -3888,10 +3888,24 @@ objectType({
 objectType({
   source: stringType().min(1),
   schemaJson: stringType().nullable(),
-  backendId: stringType().nullable()
+  backendId: stringType().nullable(),
+  /** Which stored revision this run was asked with, when it came from one. */
+  schemaRevisionId: stringType().nullable().optional()
 });
 objectType({ runId: stringType().min(1) });
 objectType({ source: stringType().min(1) });
+const fieldSpecSchema = objectType({
+  name: stringType(),
+  kind: enumType(["text", "list", "number", "date"]),
+  description: stringType().optional()
+});
+objectType({
+  schemaId: stringType().optional(),
+  name: stringType().min(1),
+  description: stringType().optional(),
+  fields: arrayType(fieldSpecSchema)
+});
+objectType({ schemaId: stringType().min(1) });
 discriminatedUnionType("kind", [
   objectType({ kind: literalType("event"), event: pipelineEventSchema }),
   objectType({ kind: literalType("done"), runId: stringType(), summary: unknownType() }),
@@ -3909,6 +3923,10 @@ const CHANNELS = {
   listRuns: "lirovo:list-runs",
   pickFile: "lirovo:pick-file",
   inspect: "lirovo:inspect",
+  listSchemas: "lirovo:list-schemas",
+  saveSchema: "lirovo:save-schema",
+  schemaRevisions: "lirovo:schema-revisions",
+  archiveSchema: "lirovo:archive-schema",
   engineEvent: "lirovo:engine-event"
 };
 const api = {
@@ -3918,6 +3936,10 @@ const api = {
   extract: (request) => ipcRenderer.invoke(CHANNELS.extract, request),
   cancel: () => ipcRenderer.invoke(CHANNELS.cancel),
   inspect: (source) => ipcRenderer.invoke(CHANNELS.inspect, { source }),
+  listSchemas: () => ipcRenderer.invoke(CHANNELS.listSchemas),
+  saveSchema: (input) => ipcRenderer.invoke(CHANNELS.saveSchema, input),
+  schemaRevisions: (schemaId) => ipcRenderer.invoke(CHANNELS.schemaRevisions, { schemaId }),
+  archiveSchema: (schemaId) => ipcRenderer.invoke(CHANNELS.archiveSchema, { schemaId }),
   pickFile: () => ipcRenderer.invoke(CHANNELS.pickFile),
   /**
    * A dropped file gives the renderer a File object with no path. This is the

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/ipc.js";
 import type { ExtractRequest, RunDetail, RunSummary, SourceInspection } from "../main/ipc.js";
+import type { FieldSpec } from "@lirovo/core";
+import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 
 /**
  * Nothing throws across the bridge.
@@ -20,6 +22,18 @@ const api = {
   extract: (request: ExtractRequest): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.extract, request),
   cancel: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.cancel),
   inspect: (source: string): Promise<Result<SourceInspection>> => ipcRenderer.invoke(CHANNELS.inspect, { source }),
+
+  listSchemas: (): Promise<Result<SchemaSummary[]>> => ipcRenderer.invoke(CHANNELS.listSchemas),
+  saveSchema: (input: {
+    schemaId?: string;
+    name: string;
+    description?: string;
+    fields: readonly FieldSpec[];
+  }): Promise<Result<SchemaRevision>> => ipcRenderer.invoke(CHANNELS.saveSchema, input),
+  schemaRevisions: (schemaId: string): Promise<Result<SchemaRevision[]>> =>
+    ipcRenderer.invoke(CHANNELS.schemaRevisions, { schemaId }),
+  archiveSchema: (schemaId: string): Promise<Result<unknown>> =>
+    ipcRenderer.invoke(CHANNELS.archiveSchema, { schemaId }),
   pickFile: (): Promise<Result<string | null>> => ipcRenderer.invoke(CHANNELS.pickFile),
 
   /**
