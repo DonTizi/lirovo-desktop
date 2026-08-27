@@ -170,7 +170,8 @@ export function FramesTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: 
       {kept.length === 0 ? (
         <Empty>No frames were kept. Either the video never cuts, or scene detection did not run.</Empty>
       ) : (
-        <div className="grid gap-px p-px sm:grid-cols-2">
+        <div className="scrollbar-hide max-h-[70vh] overflow-y-auto">
+          <div className="grid gap-px p-px sm:grid-cols-2">
           {kept.map((frame) => {
             const seen = describedBy.get(frame.idx);
             const active = Math.abs(lens.t * 1000 - frame.tMs) < 1500;
@@ -184,7 +185,10 @@ export function FramesTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: 
                   className="shadow-ring size-24 shrink-0 overflow-hidden rounded"
                   aria-label={`Seek to ${formatTime(frame.tMs / 1000)}`}
                 >
-                  <img src={frame.url} alt="" className="size-full object-cover" />
+                  {/* Lazy, because a talk yields hundreds of frames and
+                      decoding them all at once stalls the window for seconds
+                      to paint the two the reader can see. */}
+                  <img src={frame.url} alt="" loading="lazy" decoding="async" className="size-full object-cover" />
                 </button>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -218,6 +222,7 @@ export function FramesTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: 
               </div>
             );
           })}
+          </div>
         </div>
       )}
     </Card>

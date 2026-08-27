@@ -51,7 +51,12 @@ const withinRoot = (candidate: string, root: string): boolean => {
 export const handleMediaRequest = (url: string, roots: readonly string[]): Response => {
   const file = pathFromMediaUrl(url);
 
-  if (!roots.some((root) => withinRoot(file, root))) return new Response("forbidden", { status: 403 });
+  if (!roots.some((root) => withinRoot(file, root))) {
+    // Logged rather than silent: a refused request renders as a black player,
+    // and a black player with nothing in the log is unfixable.
+    process.stderr.write(`[media] refused ${file}\n`);
+    return new Response("forbidden", { status: 403 });
+  }
 
   try {
     const size = statSync(file).size;
@@ -66,6 +71,7 @@ export const handleMediaRequest = (url: string, roots: readonly string[]): Respo
       },
     });
   } catch {
+    process.stderr.write(`[media] missing ${file}\n`);
     return new Response("not found", { status: 404 });
   }
 };

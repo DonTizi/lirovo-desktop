@@ -10284,7 +10284,8 @@ const selectBackend = async (backends, need) => {
   return null;
 };
 const MEDIA_SCHEME = "lirovo-media";
-const mediaUrl = (absolutePath) => `${MEDIA_SCHEME}://${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
+const MEDIA_HOST = "artifact";
+const mediaUrl = (absolutePath) => `${MEDIA_SCHEME}://${MEDIA_HOST}${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
 const send = (message) => {
   process.parentPort.postMessage(message);
 };

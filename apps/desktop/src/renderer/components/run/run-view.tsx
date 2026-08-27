@@ -92,19 +92,14 @@ export function RunView({
   const available = panes.filter((p) => p.key === "extracted" || p.count > 0);
   const active = available.some((p) => p.key === pane) ? pane : "extracted";
 
-  return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(360px,42%)_minmax(0,1fr)] xl:items-start">
-      <div className="grid gap-4 xl:sticky xl:top-4">
-        {loading ? <Skeleton className="h-56 w-full rounded-lg" /> : <Player artifacts={shown} lens={lens} marks={marks} />}
-        <RunProgress
-          status={detail.status}
-          live={live}
-          attempts={detail.stages}
-          errorCode={detail.errorCode}
-          errorMessage={detail.errorMessage}
-        />
-      </div>
+  // The record of how the run went is a troubleshooting artifact, not part of
+  // reviewing the result. It belongs in front of somebody only while something
+  // went wrong; on a run that worked it is eight green rows between the reader
+  // and the answer.
+  const finished = detail.status === "succeeded";
 
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,38%)] xl:items-start">
       <div className="grid min-w-0 gap-3">
         <div className="border-hairline flex items-center gap-1 border-b">
           {available.map((p) => (
@@ -143,6 +138,40 @@ export function RunView({
               <GraphNodes artifacts={shown} lens={lens} />
             </details>
           </Card>
+        )}
+      </div>
+
+      {/* The video stays put while the left column changes. It is the thing
+          every pane points at, so it is the thing that must not move. */}
+      <div className="grid gap-3 xl:sticky xl:top-4">
+        {loading ? (
+          <Skeleton className="h-56 w-full rounded-lg" />
+        ) : (
+          <Player artifacts={shown} lens={lens} marks={marks} />
+        )}
+
+        {finished ? (
+          <details className="bg-base shadow-ring rounded-lg">
+            <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none px-4 py-2 text-xs transition-colors">
+              How this run went
+            </summary>
+            <RunProgress
+              status={detail.status}
+              live={live}
+              attempts={detail.stages}
+              errorCode={detail.errorCode}
+              errorMessage={detail.errorMessage}
+              bare
+            />
+          </details>
+        ) : (
+          <RunProgress
+            status={detail.status}
+            live={live}
+            attempts={detail.stages}
+            errorCode={detail.errorCode}
+            errorMessage={detail.errorMessage}
+          />
         )}
       </div>
     </div>

@@ -8,9 +8,19 @@
  */
 export const MEDIA_SCHEME = "lirovo-media";
 
-/** Turn an absolute path into a URL the renderer can put in a src. */
+/**
+ * A fixed host, and the file in the path.
+ *
+ * The scheme is registered `standard`, which means Chromium parses it with
+ * host/path semantics: an absolute POSIX path written straight after `://`
+ * puts `Users` in the host and drops it from the path. Naming a host
+ * explicitly makes the whole file the pathname, which is the only part that
+ * round-trips.
+ */
+export const MEDIA_HOST = "artifact";
+
 export const mediaUrl = (absolutePath: string): string =>
-  `${MEDIA_SCHEME}://${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
+  `${MEDIA_SCHEME}://${MEDIA_HOST}${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
 
 /** Collapse `.` and `..` without asking the filesystem. */
 const normalise = (raw: string): string => {
@@ -23,9 +33,4 @@ const normalise = (raw: string): string => {
   return `/${out.join("/")}`;
 };
 
-export const pathFromMediaUrl = (url: string): string => {
-  // Host and pathname are recombined because a `standard` scheme parses the
-  // first segment of an absolute POSIX path as the host.
-  const parsed = new URL(url);
-  return normalise(decodeURIComponent(`${parsed.hostname}${parsed.pathname}`));
-};
+export const pathFromMediaUrl = (url: string): string => normalise(decodeURIComponent(new URL(url).pathname));

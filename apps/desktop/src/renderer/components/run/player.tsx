@@ -11,6 +11,26 @@ import { cn } from "../../lib/cn";
  * both seek the clock the player reads from. Splitting them across tabs would
  * make the position something the user has to re-establish every time.
  */
+/**
+ * At most one mark per slot along the strip.
+ *
+ * A twenty-minute talk produces hundreds of evidence spans and hundreds of
+ * frames. Drawn one-for-one they merge into a solid blue band that says
+ * nothing except "there is a lot", and cost hundreds of DOM nodes to say it.
+ */
+const SLOTS = 120;
+const thinned = (times: readonly number[], durationS: number): number[] => {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const t of times) {
+    const slot = Math.round((t / Math.max(1, durationS)) * SLOTS);
+    if (seen.has(slot)) continue;
+    seen.add(slot);
+    out.push(t);
+  }
+  return out;
+};
+
 export function Player({
   artifacts,
   lens,
@@ -65,7 +85,7 @@ export function Player({
                   active ? "opacity-100" : "opacity-60 hover:opacity-90",
                 )}
               >
-                <img src={frame.url} alt="" className="size-full object-cover" />
+                <img src={frame.url} alt="" loading="lazy" decoding="async" className="size-full object-cover" />
                 <span className="absolute bottom-0.5 right-1 rounded bg-black/65 px-1 font-mono text-[10px] tabular-nums text-white">
                   {formatTime(frame.tMs / 1000)}
                 </span>
@@ -84,19 +104,22 @@ export function Player({
           lens.seek(((e.clientX - box.left) / box.width) * durationS);
         }}
       >
-        {marks.map((mark, i) => (
+        {thinned(marks.map((m) => m.t), durationS).map((t) => (
           <span
-            key={`${mark.t}-${i}`}
-            title={`${mark.label} · ${formatTime(mark.t)}`}
-            className="bg-brand/60 absolute top-2 h-4 w-px"
-            style={{ left: at(mark.t) }}
+            key={`m${t}`}
+            title={formatTime(t)}
+            className="bg-brand/50 absolute top-2 h-4 w-px"
+            style={{ left: at(t) }}
           />
         ))}
-        {artifacts.frames.map((frame) => (
+        {thinned(
+          artifacts.frames.filter((f) => f.kept).map((f) => f.tMs / 1000),
+          durationS,
+        ).map((t) => (
           <span
-            key={`f${frame.idx}`}
-            className={cn("absolute bottom-1 h-1.5 w-1.5 -translate-x-1/2 rounded-full", frame.kept ? "bg-ink-subtle" : "bg-fill")}
-            style={{ left: at(frame.tMs / 1000) }}
+            key={`f${t}`}
+            className="bg-ink-subtle absolute bottom-1 size-1 -translate-x-1/2 rounded-full"
+            style={{ left: at(t) }}
           />
         ))}
         <span

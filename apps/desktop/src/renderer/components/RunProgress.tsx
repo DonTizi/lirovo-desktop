@@ -99,12 +99,15 @@ export function RunProgress({
   attempts,
   errorCode,
   errorMessage,
+  bare,
 }: {
   status: string;
   live: ReadonlyMap<Stage, LiveStage>;
   attempts: readonly StageAttempt[];
   errorCode?: string | null;
   errorMessage?: string | null;
+  /** Inside a disclosure that already has a heading; drop the card chrome. */
+  bare?: boolean;
 }): JSX.Element {
   const stopped = status === "stopped";
 
@@ -117,13 +120,8 @@ export function RunProgress({
           ? (errorCode ?? "failed")
           : status;
 
-  return (
-    <Card>
-      <CardHeader
-        title="Progress"
-        action={<span className={cn(stopped && "text-warning-text", status === "failed" && "text-danger-text")}>{headline}</span>}
-      />
-
+  const body = (
+    <>
       {stopped && (
         // Named plainly, because the row said RUNNING for an hour and the only
         // honest reading of that is that nothing is working on it.
@@ -145,6 +143,22 @@ export function RunProgress({
           {errorCode === null || errorCode === undefined ? errorMessage : `${errorCode}: ${errorMessage}`}
         </p>
       )}
+    </>
+  );
+
+  if (bare === true) return <div className="border-hairline border-t">{body}</div>;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Progress"
+        action={
+          <span className={cn(stopped && "text-warning-text", status === "failed" && "text-danger-text")}>
+            {headline}
+          </span>
+        }
+      />
+      {body}
     </Card>
   );
 }

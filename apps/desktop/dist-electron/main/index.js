@@ -6069,10 +6069,7 @@ const normalise = (raw) => {
   }
   return `/${out.join("/")}`;
 };
-const pathFromMediaUrl = (url) => {
-  const parsed = new URL(url);
-  return normalise(decodeURIComponent(`${parsed.hostname}${parsed.pathname}`));
-};
+const pathFromMediaUrl = (url) => normalise(decodeURIComponent(new URL(url).pathname));
 const registerMediaScheme = () => {
   protocol.registerSchemesAsPrivileged([
     {
@@ -6095,7 +6092,11 @@ const withinRoot = (candidate, root) => {
 };
 const handleMediaRequest = (url, roots) => {
   const file = pathFromMediaUrl(url);
-  if (!roots.some((root) => withinRoot(file, root))) return new Response("forbidden", { status: 403 });
+  if (!roots.some((root) => withinRoot(file, root))) {
+    process.stderr.write(`[media] refused ${file}
+`);
+    return new Response("forbidden", { status: 403 });
+  }
   try {
     const size = statSync(file).size;
     return new Response(Readable.toWeb(createReadStream(file)), {
@@ -6109,6 +6110,8 @@ const handleMediaRequest = (url, roots) => {
       }
     });
   } catch {
+    process.stderr.write(`[media] missing ${file}
+`);
     return new Response("not found", { status: 404 });
   }
 };
