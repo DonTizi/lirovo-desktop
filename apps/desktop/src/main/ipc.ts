@@ -189,5 +189,6 @@ export interface RunSummary {
   readonly durationS: number | null;
   readonly sourceType: string | null;
   readonly schemaName: string | null;
-  readonly frameCount: number;
+  /** Null when dedup never finished, which is not the same as zero frames. */
+  readonly frameCount: number | null;
 }

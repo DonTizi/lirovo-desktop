@@ -79,10 +79,13 @@ function GroundedCell({ run }: { run: RunSummary }): JSX.Element {
 export function Library({
   runs,
   loading,
+  error,
   onOpen,
 }: {
   runs: readonly RunSummary[];
   loading: boolean;
+  /** Set when the list could not be read at all — never the same as empty. */
+  error?: string | null;
   onOpen: (runId: string) => void;
 }): JSX.Element {
   const [hidden, setHidden] = useState<ReadonlySet<ColumnKey>>(new Set());
@@ -98,7 +101,7 @@ export function Library({
       case "duration":
         return <span className="tabular-nums">{clock(run.durationS)}</span>;
       case "frames":
-        return <span className="tabular-nums">{run.frameCount || "—"}</span>;
+        return <span className="tabular-nums">{run.frameCount ?? "—"}</span>;
       case "values":
         return <span className="tabular-nums">{run.valueCount}</span>;
       case "grounded":
@@ -186,8 +189,14 @@ export function Library({
 
           {!loading && runs.length === 0 && (
             <tr>
-              <td colSpan={shown.length + 2} className="text-ink-subtle px-4 py-10 text-center">
-                Nothing extracted yet.
+              <td
+                colSpan={shown.length + 2}
+                className={cn(
+                  "px-4 py-10 text-center",
+                  error === null || error === undefined ? "text-ink-subtle" : "text-danger-text font-mono text-xs",
+                )}
+              >
+                {error === null || error === undefined ? "Nothing extracted yet." : error}
               </td>
             </tr>
           )}

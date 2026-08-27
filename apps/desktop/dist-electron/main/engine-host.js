@@ -10304,15 +10304,21 @@ const listRuns = () => withDb((db) => {
   const rows = db.prepare(
     `SELECT r.id AS runId, r.status, s.title, r.created_at AS createdAt,
                 r.lease_expires_at AS leaseExpiresAt,
-                s.duration_s AS durationS, s.source_type AS sourceType,
+                s.duration_s AS durationS, s.kind AS sourceType,
                 sr.name AS schemaName,
                 (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount,
                 (SELECT COUNT(DISTINCT ve.observation_id)
                    FROM extracted_values v2
                    JOIN value_evidence ve ON ve.observation_id = v2.observation_id
                   WHERE v2.run_id = r.id) AS groundedCount,
-                (SELECT COUNT(*) FROM artifacts a
-                  WHERE a.run_id = r.id AND a.rel_path LIKE 'frames/dedup/%') AS frameCount
+                -- From the stage's own recorded output rather than by counting
+                -- files: the frames are written straight to disk and never
+                -- registered as artifact rows, so counting rows returns zero
+                -- for every run that actually produced hundreds.
+                (SELECT json_extract(a.output_json, '$.keptCount')
+                   FROM run_stage_attempts a
+                  WHERE a.run_id = r.id AND a.stage = 'dedup' AND a.status = 'done'
+                  ORDER BY a.attempt DESC LIMIT 1) AS frameCount
            FROM runs r
            JOIN sources s ON s.id = r.source_id
            LEFT JOIN schema_revisions rev ON rev.id = r.schema_revision_id

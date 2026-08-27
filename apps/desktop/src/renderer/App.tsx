@@ -104,6 +104,7 @@ export const App = (): JSX.Element => {
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runsError, setRunsError] = useState<string | null>(null);
   const [openTabs, setOpen] = useState<Map<string, RunDetail>>(new Map());
   const [system, setSystem] = useState<SystemReport | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
@@ -115,7 +116,15 @@ export const App = (): JSX.Element => {
 
   const loadRuns = useCallback(async () => {
     const answer = await window.lirovo.listRuns();
-    if (answer.ok) setRuns(answer.value);
+    if (answer.ok) {
+      setRuns(answer.value);
+      setRunsError(null);
+      return;
+    }
+    // Never silent. A query that throws used to render as "Nothing extracted
+    // yet", which is the same picture as a working app with no runs — and the
+    // one state where the user has no reason to suspect anything is wrong.
+    setRunsError(`${answer.error.code}: ${answer.error.message}`);
   }, []);
 
   useEffect(
@@ -438,7 +447,12 @@ export const App = (): JSX.Element => {
           {tab === "schemas" && <SchemasPage />}
 
           {tab === "library" && (
-            <Library runs={runs} loading={runs.length === 0 && system === null} onOpen={(id) => void openRun(id)} />
+            <Library
+              runs={runs}
+              loading={runs.length === 0 && system === null && runsError === null}
+              error={runsError}
+              onOpen={(id) => void openRun(id)}
+            />
           )}
 
           {detail !== null && (
