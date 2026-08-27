@@ -169,6 +169,18 @@ export const App = (): JSX.Element => {
     void loadRuns();
   }, [check, loadRuns]);
 
+  /** Painted immediately, then confirmed: a click that waits on a round trip
+   *  before the check moves reads as broken. */
+  const chooseBackend = (backendId: string): void => {
+    setSystem((current) => (current === null ? current : { ...current, defaultBackendId: backendId }));
+    void window.lirovo.setDefaultBackend(backendId).then((answer) => {
+      if (!answer.ok) return;
+      setSystem((current) =>
+        current === null ? current : { ...current, defaultBackendId: answer.value.defaultBackendId },
+      );
+    });
+  };
+
   const start = async (): Promise<void> => {
     if (source.trim() === "") return;
     setError(null);
@@ -274,10 +286,17 @@ export const App = (): JSX.Element => {
     icon: History,
   }));
 
+  // System earns a tab of its own. It was only at the foot of Overview, under
+  // the hero, the field and the schema picker — so on the one machine it
+  // exists for, the machine where nothing works yet, the page that says what
+  // is missing was the last thing on the page.
+  const attention =
+    system === null ? 0 : (system.ok ? 0 : system.problems.length) + system.warnings.length;
   const sections: NavTab[] = [
     { id: "overview", label: "Overview" },
     { id: "library", label: "Library", count: runs.length },
     { id: "schemas", label: "Schemas" },
+    { id: "system", label: "System", ...(attention > 0 ? { count: attention } : {}) },
   ];
   const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
     id: r.runId,
@@ -309,7 +328,7 @@ export const App = (): JSX.Element => {
             return next;
           })
         }
-        onOpenSettings={() => setTab("overview")}
+        onOpenSettings={() => setTab("system")}
         dataDir={dataDir}
       />
 
@@ -402,17 +421,7 @@ export const App = (): JSX.Element => {
                 <SystemPanel
                   report={system}
                   onRecheck={() => void check()}
-                  onChooseBackend={(backendId) => {
-                    // Painted immediately, then confirmed: a click that waits
-                    // on a round trip before the check moves reads as broken.
-                    setSystem((current) => (current === null ? current : { ...current, defaultBackendId: backendId }));
-                    void window.lirovo.setDefaultBackend(backendId).then((answer) => {
-                      if (!answer.ok) return;
-                      setSystem((current) =>
-                        current === null ? current : { ...current, defaultBackendId: answer.value.defaultBackendId },
-                      );
-                    });
-                  }}
+                  onChooseBackend={chooseBackend}
                   checking={checking}
                 />
               </div>
@@ -446,6 +455,21 @@ export const App = (): JSX.Element => {
           )}
 
           {tab === "schemas" && <SchemasPage />}
+
+          {tab === "system" && (
+            <div className="pb-16">
+              <Hero title="System" sub="What this Mac can do, and what it is missing." />
+              <div className="mt-10">
+                <SystemPanel
+                  report={system}
+                  onRecheck={() => void check()}
+                  onChooseBackend={chooseBackend}
+                  checking={checking}
+                  expanded
+                />
+              </div>
+            </div>
+          )}
 
           {tab === "library" && (
             <Library

@@ -387,13 +387,16 @@ export function SystemPanel({
   onRecheck,
   onChooseBackend,
   checking,
+  expanded,
 }: {
   report: SystemReport | null;
   onRecheck: () => void;
   onChooseBackend: (backendId: string) => void;
   checking: boolean;
+  /** On its own page there is nothing to disclose: it is already the subject. */
+  expanded?: boolean;
 }): JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(expanded === true);
 
   if (report === null) {
     return (
@@ -486,13 +489,15 @@ export function SystemPanel({
         >
           <RefreshCw className={cn("size-3.5", checking && "animate-spin")} />
         </button>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          aria-label={open ? "Hide details" : "Show details"}
-          className="text-ink-subtle hover:text-ink shrink-0 transition-colors"
-        >
-          <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
-        </button>
+        {expanded !== true && (
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-label={open ? "Hide details" : "Show details"}
+            className="text-ink-subtle hover:text-ink shrink-0 transition-colors"
+          >
+            <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+          </button>
+        )}
       </div>
 
       <AnimatePresence initial={false}>
