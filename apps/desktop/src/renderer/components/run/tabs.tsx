@@ -1,4 +1,6 @@
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ListMusic } from "lucide-react";
+import { cueAt, toParagraphs } from "@lirovo/core";
 import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
 import { Card, CardHeader, Mono, StateLabel } from "../primitives";
 import { ColumnPicker, StationTable, useColumns, type TableColumn } from "../station-table";
@@ -160,56 +162,110 @@ export function ValuesTab({
 
 /* -------------------------------------------------------------- transcript */
 
+/**
+ * The transcript as prose, with the spoken line lit up inside it.
+ *
+ * Auto-captions arrive as two-second fragments cut to fit a subtitle bar, so
+ * one row per cue turns twenty minutes into 554 half-sentences: every word is
+ * present and none of it is readable. They are gathered into paragraphs here —
+ * nothing is dropped, and each cue keeps its own timing, which is what lets the
+ * line currently being spoken be highlighted inside the paragraph and a click
+ * still land on the second it started.
+ */
 export function TranscriptTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: Lens }): JSX.Element {
   const box = useRef<HTMLDivElement>(null);
-  const { maskImage, onScroll } = useScrollMask(box, [artifacts.transcript?.segments.length ?? 0]);
+  const [follow, setFollow] = useState(true);
   const segments = artifacts.transcript?.segments ?? [];
+  const paragraphs = useMemo(() => toParagraphs(segments), [segments]);
+  const { maskImage, onScroll } = useScrollMask(box, [paragraphs.length]);
+
+  const activeIndex = paragraphs.findIndex((p) => lens.t >= p.tStart && lens.t < p.tEnd);
+
+  // Follow the playhead, and stop the moment the reader takes over. A pane
+  // that keeps yanking itself back is a pane you cannot read ahead in.
+  useEffect(() => {
+    if (!follow || activeIndex < 0) return;
+    box.current?.querySelector(`[data-para="${activeIndex}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [follow, activeIndex]);
 
   return (
-    <Card>
-      <CardHeader
-        title="Transcript"
-        action={
-          artifacts.transcript === null
-            ? "none"
-            : `${segments.length} segment${segments.length === 1 ? "" : "s"}${
-                artifacts.transcript.engine === null ? "" : ` · ${artifacts.transcript.engine}`
-              }`
-        }
-      />
-      {segments.length === 0 ? (
+    <section className="border-hairline bg-base overflow-hidden rounded-xl border">
+      <div className="border-hairline flex items-center justify-between border-b px-5 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Transcript</h2>
+          <span className="bg-fill-hover text-ink-label rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums">
+            {paragraphs.length}
+          </span>
+          <span className="text-ink-subtle text-xs">
+            {segments.length} cue{segments.length === 1 ? "" : "s"}
+            {artifacts.transcript?.engine === null || artifacts.transcript?.engine === undefined
+              ? ""
+              : ` · ${artifacts.transcript.engine}`}
+          </span>
+        </div>
+        <button
+          onClick={() => setFollow((v) => !v)}
+          className={cn(
+            "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors",
+            follow ? "border-line bg-fill-hover text-ink-strong" : "border-hairline text-ink-label hover:bg-fill-hover",
+          )}
+        >
+          {follow ? <Check className="size-3.5" strokeWidth={2.5} /> : <ListMusic className="size-3.5" />}
+          Follow
+        </button>
+      </div>
+
+      {paragraphs.length === 0 ? (
         <Empty>No transcript was produced for this run.</Empty>
       ) : (
         <div
           ref={box}
           onScroll={onScroll}
+          onWheel={() => setFollow(false)}
           style={maskImage === undefined ? undefined : { WebkitMaskImage: maskImage, maskImage }}
-          className="scrollbar-hide max-h-[60vh] overflow-y-auto"
+          className="scrollbar-hide max-h-[62vh] overflow-y-auto"
         >
-          {segments.map((seg) => {
-            const active = lens.t >= seg.tStart && lens.t < seg.tEnd;
+          {paragraphs.map((paragraph, i) => {
+            const active = i === activeIndex;
+            const spoken = active ? cueAt(paragraph, lens.t) : null;
             return (
-              <button
-                key={seg.id}
-                onClick={() => lens.seek(seg.tStart)}
+              <div
+                key={paragraph.tStart}
+                data-para={i}
                 className={cn(
-                  "border-hairline hover:bg-elevated flex w-full items-start gap-3 border-b px-4 py-2.5 text-left transition-colors last:border-b-0",
+                  "border-hairline flex items-start gap-4 border-b px-5 py-3 last:border-b-0",
                   active && "bg-elevated",
                 )}
               >
-                <span className="text-ink-subtle w-12 shrink-0 pt-0.5 font-mono text-xs tabular-nums">
-                  {formatTime(seg.tStart)}
-                </span>
-                <span className={cn("min-w-0 flex-1 text-sm", active ? "text-ink-strong" : "text-ink-label")}>
-                  {seg.speaker !== null && <span className="text-ink-subtle mr-2 text-xs">{seg.speaker}</span>}
-                  {seg.text}
-                </span>
-              </button>
+                <button
+                  onClick={() => lens.seek(paragraph.tStart)}
+                  className="text-ink-subtle hover:text-ink shrink-0 pt-0.5 font-mono text-xs tabular-nums transition-colors"
+                >
+                  {formatTime(paragraph.tStart)}
+                </button>
+                <p className="text-ink-label min-w-0 flex-1 text-[13px] leading-relaxed">
+                  {paragraph.speaker !== null && (
+                    <span className="text-ink-subtle mr-2 text-xs">{paragraph.speaker}</span>
+                  )}
+                  {paragraph.cues.map((cue, j) => (
+                    <span
+                      key={j}
+                      onClick={() => lens.seek(cue.tStart)}
+                      className={cn(
+                        "cursor-pointer",
+                        spoken === cue ? "text-ink-strong bg-brand-soft rounded px-0.5 font-medium" : "",
+                      )}
+                    >
+                      {cue.text.trim()}{" "}
+                    </span>
+                  ))}
+                </p>
+              </div>
             );
           })}
         </div>
       )}
-    </Card>
+    </section>
   );
 }
 
