@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleCheck, CircleDashed, CircleSlash, CircleX, Loader2, Upload } from "lucide-react";
+import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
-import { Badge, Card, CardHeader, Mono, StateLabel, StatTile } from "./components/primitives";
+import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
+import { DropZone } from "./components/DropZone";
 import { cn } from "./lib/cn";
 
 const DEFAULT_SCHEMA = `{
@@ -221,6 +222,37 @@ export const App = (): JSX.Element => {
   }, [detail, query]);
   const grounded = values.filter((v) => v.evidence.length > 0).length;
 
+  const succeeded = runs.filter((r) => r.status === "succeeded").length;
+  const totalValues = runs.reduce((n, r) => n + r.valueCount, 0);
+
+  const runEntries: ListEntry[] = runs.map((r) => ({
+    id: r.runId,
+    label: r.title ?? r.runId,
+    hint: `${r.valueCount} value${r.valueCount === 1 ? "" : "s"}`,
+    meta: r.status,
+    icon: FileVideo,
+  }));
+
+  // A run that produced nothing is the one a human most needs to look at, so it
+  // ranks above one that merely finished.
+  const reviewEntries: ListEntry[] = runs
+    .filter((r) => r.status !== "succeeded" || r.valueCount === 0)
+    .map((r) => ({
+      id: r.runId,
+      label: r.title ?? r.runId,
+      hint: r.status === "succeeded" ? "nothing was extracted" : `run ${r.status}`,
+      meta: String(r.valueCount),
+      icon: ShieldAlert,
+    }));
+
+  const activityEntries: ListEntry[] = runs.map((r) => ({
+    id: r.runId,
+    label: `${r.title ?? r.runId} · ${r.status}`,
+    hint: `${r.valueCount} value${r.valueCount === 1 ? "" : "s"} recorded`,
+    meta: new Date(r.createdAt * 1000).toLocaleDateString(),
+    icon: History,
+  }));
+
   const sections: NavTab[] = [
     { id: "overview", label: "Overview" },
     { id: "library", label: "Library", count: runs.length },
@@ -262,69 +294,59 @@ export const App = (): JSX.Element => {
       />
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto grid max-w-5xl gap-4 p-5">
+        <div className="mx-auto max-w-6xl px-6 py-10">
           {tab === "overview" && (
             <>
               {ready !== null && !ready.ok && (
-                <Card className="border-danger/30 px-4 py-3">
-                  <span className="text-danger-text text-sm">{ready.note}</span>
-                </Card>
+                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">{ready.note}</p>
               )}
 
-              <div className="grid grid-cols-4 gap-3">
-                <StatTile label="Runs" value={String(runs.length)} />
-                <StatTile label="Succeeded" value={String(runs.filter((r) => r.status === "succeeded").length)} />
-                <StatTile label="Values" value={String(runs.reduce((n, r) => n + r.valueCount, 0))} />
-                <StatTile label="Backends" value={ready?.note ?? "…"} hint="detected on this machine" />
-              </div>
+              <h1 className="text-ink-strong text-center text-4xl font-semibold tracking-tight">Lirovo</h1>
 
-              <Card>
-                <CardHeader title="New extraction" action={ready?.dataDir ?? ""} />
-                <div className="p-4">
-                  <div
-                    className={cn(
-                      "group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-10 transition-colors",
-                      over ? "border-brand bg-brand-soft/40" : "border-line hover:border-ink-tertiary",
-                    )}
-                    data-awake={over}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setOver(true);
-                    }}
-                    onDragLeave={() => setOver(false)}
-                    onDrop={onDrop}
-                    onClick={async () => {
-                      const picked = await window.lirovo.pickFile();
+              <div className="relative mx-auto mt-7 max-w-3xl">
+                <DropZone
+                  busy={running}
+                  onPath={setSource}
+                  onBrowse={() => {
+                    void window.lirovo.pickFile().then((picked) => {
                       if (picked.ok && picked.value !== null) setSource(picked.value);
-                    }}
-                  >
-                    <Upload size={20} className="text-ink-tertiary" />
-                    <span className="text-ink-label text-sm">Drop a video here, or click to choose one</span>
-                  </div>
+                    });
+                  }}
+                />
 
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      className="border-line bg-surface-subtle text-ink placeholder:text-ink-tertiary focus:border-brand focus:bg-surface focus:ring-brand/20 h-9 flex-1 rounded-lg border px-3 text-sm outline-none transition-colors focus:ring-2"
-                      placeholder="…or paste a URL, or a file path"
-                      value={source}
-                      onChange={(e) => setSource(e.target.value)}
-                    />
-                  </div>
+                <input
+                  className="border-line bg-surface-subtle text-ink placeholder:text-ink-tertiary focus:border-brand focus:bg-surface focus:ring-brand/20 mt-3 h-9 w-full rounded-lg border px-3 text-sm outline-none transition-colors focus:ring-2"
+                  placeholder="…or paste a URL, or a file path"
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                />
 
-                  <p className="text-ink-label mt-4 text-xs uppercase tracking-wide">
+                <details className="group mt-3">
+                  <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-xs uppercase tracking-wide transition-colors">
                     Schema — leave empty to transcribe only
-                  </p>
+                  </summary>
                   <textarea
-                    className="border-line bg-surface-subtle text-ink focus:border-brand focus:bg-surface focus:ring-brand/20 mt-1.5 min-h-[132px] w-full rounded-lg border p-3 font-mono text-xs outline-none transition-colors focus:ring-2"
+                    className="border-line bg-surface-subtle text-ink focus:border-brand focus:bg-surface focus:ring-brand/20 mt-2 min-h-[132px] w-full rounded-lg border p-3 font-mono text-xs outline-none transition-colors focus:ring-2"
                     value={schema}
                     onChange={(e) => setSchema(e.target.value)}
                     spellCheck={false}
                   />
-                </div>
-              </Card>
+                </details>
+              </div>
+
+              <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <StatTile label="Runs" value={String(runs.length)} />
+                <StatTile
+                  label="Succeeded"
+                  value={String(succeeded)}
+                  hint={runs.length > 0 ? `${Math.round((succeeded / runs.length) * 100)} % of runs` : undefined}
+                />
+                <StatTile label="Values" value={String(totalValues)} />
+                <StatTile label="Backends" value={ready?.note ?? "…"} hint="detected on this machine" />
+              </div>
 
               {(running || stages.size > 0) && (
-                <Card>
+                <Card className="mt-8">
                   <CardHeader title="Progress" action={running ? "running" : "finished"} />
                   <div>
                     {STAGES.map((stage) => (
@@ -335,10 +357,34 @@ export const App = (): JSX.Element => {
               )}
 
               {error !== null && (
-                <Card className="px-4 py-3">
-                  <span className="text-danger-text font-mono text-xs">{error}</span>
-                </Card>
+                <p className="border-hairline text-danger-text mt-8 border-t px-1 py-3 font-mono text-xs">{error}</p>
               )}
+
+              <div className="mt-10 grid gap-8 lg:grid-cols-3">
+                <ListColumn
+                  title="Runs"
+                  count={runs.length}
+                  entries={runEntries}
+                  empty="Nothing extracted yet."
+                  onSelect={(id) => void openRun(id)}
+                  onTitle={() => setTab("library")}
+                />
+                <ListColumn
+                  title="Needs review"
+                  count={reviewEntries.length}
+                  entries={reviewEntries}
+                  empty="Every value carries evidence."
+                  onSelect={(id) => void openRun(id)}
+                  delay={0.05}
+                />
+                <ListColumn
+                  title="Activity"
+                  entries={activityEntries}
+                  empty="No run recorded yet."
+                  onTitle={() => setTab("library")}
+                  delay={0.1}
+                />
+              </div>
             </>
           )}
 

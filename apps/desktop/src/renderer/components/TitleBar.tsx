@@ -61,15 +61,13 @@ export function TitleBar({
       </div>
 
       <div className="ml-auto flex items-center gap-2.5" style={noDrag}>
-        {total > 0 && (
-          <div
+        <div
             className="bg-surface-subtle flex items-center gap-2 rounded-full px-2.5 py-1"
             title={`${grounded} of ${total} values carry evidence`}
           >
             <Ring value={pct} size={18} stroke={3} tone={pct >= 1 ? "governed" : "brand"} />
             <span className="text-ink-secondary text-xs font-medium">{Math.round(pct * 100)}% grounded</span>
-          </div>
-        )}
+        </div>
         <button
           className="text-ink-tertiary hover:bg-surface-subtle hover:text-ink-secondary rounded-md p-2 transition-colors"
           onClick={onRefresh}
