@@ -5,6 +5,10 @@ import {
   isEmptySelection,
   parseShowInfo,
   summarizeFfmpegFailure,
+  LEGACY_RATE_FLAG,
+  RATE_FLAG,
+  buildSceneDetectArgs,
+  rejectsOption,
 } from "./scene-detect.js";
 import { parseProbe } from "./probe.js";
 import { isPartialDownload, isUrl, parseYtDlpPrints, sourceTypeOf } from "./ingest.js";
@@ -295,5 +299,30 @@ describe("explainYtDlpError", () => {
 
   it("passes an unrecognised failure through rather than inventing a cause", () => {
     expect(explainYtDlpError("something nobody has seen")).toBe("something nobody has seen");
+  });
+});
+
+describe("ffmpeg rate flag", () => {
+  it("uses the flag ffmpeg 9 actually accepts", () => {
+    // Reproduced against ffmpeg 9.0.1: `-vsync vfr` exits with
+    // "Unrecognized option 'vsync' / Error splitting the argument list",
+    // which is the failure that silently emptied every scene-detect run.
+    const args = buildSceneDetectArgs("/in.mp4", "fps=30", RATE_FLAG, "/out/%06d.jpg");
+    expect(args).toContain("-fps_mode");
+    expect(args).not.toContain("-vsync");
+  });
+
+  it("keeps the flag, because dropping it duplicates every kept frame", () => {
+    const args = buildSceneDetectArgs("/in.mp4", "fps=30", RATE_FLAG, "/out/%06d.jpg");
+    expect(args[args.indexOf("-fps_mode") + 1]).toBe("vfr");
+  });
+
+  it("recognises ffmpeg refusing a flag it has never heard of", () => {
+    expect(rejectsOption("Unrecognized option 'fps_mode'.\nError splitting", "fps_mode")).toBe(true);
+    expect(rejectsOption("Conversion failed!", "fps_mode")).toBe(false);
+  });
+
+  it("has a legacy flag to fall back to, for a binary older than 5.1", () => {
+    expect(LEGACY_RATE_FLAG).toEqual(["-vsync", "vfr"]);
   });
 });

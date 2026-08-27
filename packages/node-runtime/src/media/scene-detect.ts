@@ -34,6 +34,41 @@ export const defaultThresholdFor = (detector: ShotDetector): number =>
  * framerate is whatever the platform delivered and both detector metrics are
  * framerate-sensitive.
  */
+/**
+ * How ffmpeg is told not to pad the output to a constant rate.
+ *
+ * `-vsync` was removed in ffmpeg 9.0 — it exits with "Unrecognized option
+ * 'vsync'" before decoding a single frame — and `-fps_mode` has replaced it
+ * since 5.1. Both are listed because the flag is not optional: the filter chain
+ * asks for 30fps and then drops all but the cut frames, so without it the image
+ * muxer duplicates frames to fill the gaps and every scene lands on disk dozens
+ * of times.
+ */
+export const RATE_FLAG = ["-fps_mode", "vfr"] as const;
+export const LEGACY_RATE_FLAG = ["-vsync", "vfr"] as const;
+
+/** ffmpeg's own words when it does not know a flag, whatever the version. */
+export const rejectsOption = (stderr: string, option: string): boolean =>
+  stderr.includes(`Unrecognized option '${option}'`);
+
+export const buildSceneDetectArgs = (
+  videoPath: string,
+  filterChain: string,
+  rateFlag: readonly string[],
+  outputPattern: string,
+): string[] => [
+  "-y",
+  "-i", videoPath,
+  "-vf", filterChain,
+  ...rateFlag,
+  "-start_number", "0",
+  // JPEG wants full-range YUV; AV1 from YouTube arrives tagged limited
+  // range and the mjpeg encoder calls that non-standard.
+  "-pix_fmt", "yuvj420p",
+  "-q:v", "2",
+  outputPattern,
+];
+
 export const buildFilterChain = (detector: ShotDetector, threshold: number): string =>
   detector === "scdet"
     ? `fps=30,scdet=threshold=${threshold}:sc_pass=1,showinfo`
@@ -130,31 +165,32 @@ export const sceneDetect = async (
   // reports "No filtered frames for output stream", fails to initialise an
   // encoder it never needed, prints "Conversion failed!" and exits non-zero.
   // Treating that as a stage failure means every uncut video degrades.
-  let stderr = "";
-  let failure: string | null = null;
-  try {
-    const result = await deps.exec(
-      deps.ffmpeg,
-      [
-        "-y",
-        "-i", input.videoPath,
-        "-vf", buildFilterChain(detector, threshold),
-        "-vsync", "vfr",
-        "-start_number", "0",
-        // JPEG wants full-range YUV; AV1 from YouTube arrives tagged limited
-        // range and the mjpeg encoder calls that non-standard.
-        "-pix_fmt", "yuvj420p",
-        "-q:v", "2",
-        path.join(framesDir, "%06d.jpg"),
-      ],
-      { signal: input.signal, timeoutMs: 45 * 60 * 1000 },
-    );
-    stderr = result.stderr;
-  } catch (error) {
-    if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT")) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    stderr = message;
-    failure = summarizeFfmpegFailure(message);
+  const run = async (rateFlag: readonly string[]): Promise<{ stderr: string; failure: string | null }> => {
+    try {
+      const result = await deps.exec(
+        deps.ffmpeg,
+        buildSceneDetectArgs(
+          input.videoPath,
+          buildFilterChain(detector, threshold),
+          rateFlag,
+          path.join(framesDir, "%06d.jpg"),
+        ),
+        { signal: input.signal, timeoutMs: 45 * 60 * 1000 },
+      );
+      return { stderr: result.stderr, failure: null };
+    } catch (error) {
+      if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT")) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      return { stderr: message, failure: summarizeFfmpegFailure(message) };
+    }
+  };
+
+  let { stderr, failure } = await run(RATE_FLAG);
+  // Old binary. One retry rather than a version probe: this costs nothing when
+  // it never happens, and ffmpeg refuses an unknown flag before it decodes
+  // anything, so the retry is as cheap as the parse that rejected it.
+  if (failure !== null && rejectsOption(stderr, "fps_mode")) {
+    ({ stderr, failure } = await run(LEGACY_RATE_FLAG));
   }
 
   const parsed = parseShowInfo(stderr);
