@@ -59,7 +59,16 @@ export const startUpdater = (deps: UpdaterDeps): (() => void) => {
   // `beta` should also see a newer stable. Without this a beta user sits on an
   // old prerelease while everyone else has moved on.
   autoUpdater.allowPrerelease = deps.channel() === "beta";
-  autoUpdater.logger = null;
+  // Errors go to stderr, the same way a refused media request does. A failing
+  // signature check or a poisoned feed that leaves no trace anywhere is a
+  // report nobody can act on — and this is the one subsystem that reaches out
+  // to the network on its own.
+  autoUpdater.logger = {
+    info: () => undefined,
+    warn: (message: unknown) => process.stderr.write(`[updater] ${String(message)}\n`),
+    error: (message: unknown) => process.stderr.write(`[updater] ${String(message)}\n`),
+    debug: () => undefined,
+  };
 
   autoUpdater.on("checking-for-update", () => deps.send({ kind: "checking" }));
   autoUpdater.on("update-not-available", () => deps.send({ kind: "none", version: app.getVersion() }));

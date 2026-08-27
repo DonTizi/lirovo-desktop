@@ -105,10 +105,16 @@ const createWindow = (): void => {
     backgroundColor: "#101012",
     titleBarStyle: "hiddenInset",
     webPreferences: {
-      preload: path.join(here, "../preload/index.js"),
+      preload: path.join(here, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // On. The preload only uses contextBridge, ipcRenderer and
+      // webUtils.getPathForFile, all of which a sandboxed preload has — so
+      // there is nothing to buy by leaving Node reachable from the renderer.
+      // This app renders transcripts and OCR text, which is content an
+      // attacker can influence; with the sandbox off, a renderer compromise
+      // reaches Node directly instead of stopping at the bridge.
+      sandbox: true,
     },
   });
 

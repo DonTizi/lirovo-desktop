@@ -1,10 +1,12 @@
 # Build, sign, notarise and publish, into the release that triggered this.
 #
-# One workflow serves both channels, and the workflow does not decide which:
-# the VERSION does. `0.4.0-beta.1` makes electron-builder write `beta-mac.yml`
-# and only a beta user sees it; `0.4.0` writes `latest-mac.yml` and everyone
-# does. So a preview is a prerelease you publish by hand, a production build is
-# the release-please release, and this file treats them identically.
+# One workflow serves both channels, and the channel is set EXPLICITLY.
+#
+# electron-builder does not infer it from a prerelease version when the
+# provider is `github` — verified by building `0.0.1-beta.1`, which wrote
+# `latest-mac.yml`. Left implicit, publishing a preview would overwrite the
+# stable feed and hand a beta to every stable user, which is worse than a beta
+# channel that never worked.
 name: release
 
 on:
@@ -75,6 +77,19 @@ jobs:
 
       - run: pnpm --filter lirovo-desktop build
 
+      # The tag and the version have to agree, or the release advertises one
+      # number and the feed inside it carries another — and a client that
+      # trusts the feed installs something nobody named.
+      - name: the tag must match the version being built
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::release tag $TAG does not match apps/desktop version $VERSION"
+            exit 1
+          fi
+          echo "tag $TAG matches version $VERSION"
+
       - name: sign, notarise and publish
         env:
           # The Developer ID certificate, base64 of the .p12.
@@ -86,7 +101,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # electron-builder publishes to the repo this ran in.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter lirovo-desktop exec electron-builder --mac --${{ matrix.arch }} --publish always
+        run: |
+          # `beta` for a prerelease, `latest` otherwise. GitHub's own flag
+          # decides, so the channel cannot drift from what the release says it
+          # is.
+          CHANNEL=$([ "${{ github.event.release.prerelease }}" = "true" ] && echo beta || echo latest)
+          echo "publishing to the $CHANNEL channel"
+          pnpm --filter lirovo-desktop exec electron-builder \
+            --mac --${{ matrix.arch }} \
+            --publish always \
+            -c.publish.channel="$CHANNEL"
 
       # Proof, in the log, that what shipped is what we think shipped. Cheap,
       # and the only place anyone will look after a Gatekeeper complaint.

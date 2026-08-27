@@ -117,6 +117,14 @@ export const App = (): JSX.Element => {
   // The run this window is executing, so its tab can show it live.
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
+  // The main process decides whether it may quit and install, and it cannot
+  // see the engine's state. It is told here, whenever the answer changes —
+  // without this the guard is dead and "Restart now" ends a running
+  // extraction.
+  useEffect(() => {
+    void window.lirovo.busy(running);
+  }, [running]);
+
   const loadRuns = useCallback(async () => {
     const answer = await window.lirovo.listRuns();
     if (answer.ok) {

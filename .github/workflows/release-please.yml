@@ -18,6 +18,12 @@ permissions:
 jobs:
   propose:
     runs-on: ubuntu-latest
+
+    # Same reasoning as the signing secrets in release.yml: a token that can
+    # push code and cut releases feeds straight into the pipeline that holds
+    # the Developer ID, so it does not sit at repository scope where any
+    # workflow that reaches main can read it.
+    environment: release-please
     steps:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:

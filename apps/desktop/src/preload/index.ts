@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { CHANNELS } from "../main/ipc.js";
+import { CHANNELS } from "../main/channels.js";
 import type {
   ExtractRequest,
   InstallOutcome,

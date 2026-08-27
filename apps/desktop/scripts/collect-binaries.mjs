@@ -55,6 +55,23 @@ const say = (s) => process.stdout.write(`${s}\n`);
 const FFMPEG_TAG = "b6.1.2-rc.1";
 const FFMPEG_RELEASE = `https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/${FFMPEG_TAG}`;
 
+/**
+ * Verified, like everything else here.
+ *
+ * This project publishes no checksum file, so the digests are pinned in the
+ * repo instead — computed once from the assets at the tag above, and a change
+ * to any of them is a reviewable diff rather than a silent swap. It matters
+ * more here than anywhere: these two are chmod +x, signed with a Developer ID
+ * and notarised, so Gatekeeper trusts them because WE vouched for them. An
+ * architecture check is not a provenance check.
+ */
+const FFMPEG_SHA256 = {
+  "ffmpeg-darwin-arm64": "9f865039102a1139c7057d7f21ddaacd106d602fa3af1f99b70f43d520439b8c",
+  "ffmpeg-darwin-x64": "4a4a968b98859588e98500ae25973d80a5ca5eed0724222b9f76360dcb72a001",
+  "ffprobe-darwin-arm64": "05a26b32c32115785d48b01601e104712bbc6c2b1d363b9cf44c42232684e25e",
+  "ffprobe-darwin-x64": "ce5414269f0efa1e88b5e23b57f801d5b9a40be554716544936e0332b4601a62",
+};
+
 const download = async (url, dest) => {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok || response.body === null) throw new Error(`${url} returned ${response.status}`);
@@ -78,34 +95,56 @@ const sha256 = async (file) => {
  * but a collector that hands back the wrong file is the bug, and the guard is
  * the net.
  */
-const present = async (name) => {
+const present = async (name, expectedSha = null) => {
   const file = path.join(OUT, name);
   try {
     if ((await stat(file)).size === 0) return false;
   } catch {
     return false;
   }
+
   const wanted = arch === "arm64" ? "arm64" : "x86_64";
   const { stdout } = await run("file", [file]);
-  if (stdout.includes(wanted)) return true;
-  // Wrong architecture: remove it so the fetch below has somewhere to land.
-  say(`  ${name.padEnd(12)} present but not ${wanted} — replacing`);
-  await rm(file, { force: true });
-  return false;
+  if (!stdout.includes(wanted)) {
+    // Wrong architecture: remove it so the fetch below has somewhere to land.
+    say(`  ${name.padEnd(12)} present but not ${wanted} — replacing`);
+    await rm(file, { force: true });
+    return false;
+  }
+
+  // A cached file has to clear the same bar as a fresh one. Skipping the hash
+  // for something already on disk means a build machine that was tampered with
+  // once stays tampered with, and every later run signs it again.
+  if (expectedSha !== null && (await sha256(file)) !== expectedSha) {
+    say(`  ${name.padEnd(12)} present but the hash does not match — replacing`);
+    await rm(file, { force: true });
+    return false;
+  }
+  return true;
 };
 
 /* --------------------------------------------------------------- ffmpeg */
 
 const collectFfmpeg = async () => {
   for (const tool of ["ffmpeg", "ffprobe"]) {
-    if (await present(tool)) {
-      say(`  ${tool.padEnd(12)} already here`);
+    const asset = `${tool}-darwin-${arch}`;
+    const expected = FFMPEG_SHA256[asset];
+    if (expected === undefined) throw new Error(`no pinned checksum for ${asset}`);
+
+    if (await present(tool, expected)) {
+      say(`  ${tool.padEnd(12)} already here, hash verified`);
       continue;
     }
-    const url = `${FFMPEG_RELEASE}/${tool}-darwin-${arch}`;
+
     say(`  ${tool.padEnd(12)} fetching darwin-${arch}`);
     const dest = path.join(OUT, tool);
-    await download(url, dest);
+    await download(`${FFMPEG_RELEASE}/${asset}`, dest);
+
+    const actual = await sha256(dest);
+    if (actual !== expected) {
+      await rm(dest, { force: true });
+      throw new Error(`${asset} checksum mismatch — expected ${expected}, got ${actual}`);
+    }
     await chmod(dest, 0o755);
     // Proof it is the right architecture. A silently wrong one only shows up
     // as "Bad CPU type" on a user's machine, long after the build was green.
@@ -122,6 +161,13 @@ const WHISPER_REPO = "https://github.com/ggml-org/whisper.cpp.git";
 // Pinned for the same reason as ffmpeg: the same commit must produce the same
 // DMG. v1.9.3 is the newest tag as of this pin.
 const WHISPER_TAG = "v1.9.3";
+/**
+ * The commit the tag pointed at when it was pinned.
+ *
+ * Tags move. Upstream can repoint v1.9.3 and every build after that silently
+ * compiles different source — which then gets signed with our identity.
+ */
+const WHISPER_COMMIT = "371b5a7561823ab2bb32142d2751e35e7534727b";
 
 const collectWhisper = async () => {
   if (await present("whisper-cli")) {
@@ -132,6 +178,12 @@ const collectWhisper = async () => {
   try {
     say(`  whisper-cli  building ${WHISPER_TAG} for ${arch}`);
     await run("git", ["clone", "--depth", "1", "--branch", WHISPER_TAG, WHISPER_REPO, work]);
+    const { stdout: head } = await run("git", ["rev-parse", "HEAD"], { cwd: work });
+    if (head.trim() !== WHISPER_COMMIT) {
+      throw new Error(
+        `${WHISPER_TAG} now points at ${head.trim()}, not the pinned ${WHISPER_COMMIT} — refusing to build unreviewed source`,
+      );
+    }
     await run(
       "cmake",
       [
@@ -179,8 +231,19 @@ const collectWhisper = async () => {
 
 /* --------------------------------------------------------------- yt-dlp */
 
-const YT_DLP = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos";
-const YT_DLP_SUMS = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS";
+/**
+ * Pinned, like the other two.
+ *
+ * `releases/latest` made the checksum prove only that the binary and its sums
+ * file came from the same release — never that anyone had reviewed that
+ * release. Whatever happened to be newest when the job ran is what got signed
+ * with a Developer ID, and the same commit built a different DMG on a
+ * different day. Bumping this is now a commit somebody can read.
+ */
+const YT_DLP_TAG = "2026.08.19";
+const YT_DLP_RELEASE = `https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_TAG}`;
+const YT_DLP = `${YT_DLP_RELEASE}/yt-dlp_macos`;
+const YT_DLP_SUMS = `${YT_DLP_RELEASE}/SHA2-256SUMS`;
 
 const collectYtDlp = async () => {
   if (await present("yt-dlp")) {

@@ -30,6 +30,13 @@ extraResources:
   - from: resources/bin
     to: bin
     filter: ["**/*"]
+  # The GPL's written offer has to reach whoever received the binary, and the
+  # `files` allowlist above does not include anything outside dist/. A DMG that
+  # ships a GPL FFmpeg with no NOTICE beside it does not satisfy the licence.
+  - from: ../../NOTICE
+    to: NOTICE
+  - from: ../../LICENSE
+    to: LICENSE
 
 mac:
   # No `arch:` here on purpose. Declaring it makes every invocation build both

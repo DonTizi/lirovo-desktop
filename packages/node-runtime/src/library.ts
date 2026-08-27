@@ -83,16 +83,34 @@ export const purgeRuns = async (paths: LirovoPaths, db: Db): Promise<{ freedByte
 };
 
 /**
- * Remove the data directory.
+ * Everything this app creates, and nothing else.
  *
- * This is what uninstall means for an app whose entire state is one folder.
- * The directory is recreated empty so the next call finds somewhere to write
- * rather than failing on a missing parent.
+ * Named children, never the root. `LIROVO_DATA_DIR` is an env var — it exists
+ * so a test or a second profile can run against a throwaway tree — and a
+ * recursive delete of whatever it points at turns `LIROVO_DATA_DIR=$HOME`
+ * plus one confirmation into an erased home directory. Nothing about the
+ * feature requires removing the directory itself, so it does not.
+ *
+ * The list is exhaustive by construction: every path this app writes is
+ * derived from `paths`, and `bin/` is the only one not on that record.
  */
+const OWNED = ["runs", "models", "bin"] as const;
+
 export const purgeEverything = async (paths: LirovoPaths): Promise<{ freedBytes: number }> => {
   const freedBytes = await directorySize(paths.data);
-  await rm(paths.data, { recursive: true, force: true });
-  await mkdir(paths.data, { recursive: true });
+
+  for (const child of OWNED) {
+    await rm(path.join(paths.data, child), { recursive: true, force: true });
+  }
+  // The database and the two files SQLite keeps beside it in WAL mode.
+  for (const suffix of ["", "-wal", "-shm"]) {
+    await rm(`${paths.dbFile}${suffix}`, { force: true });
+  }
+  // Recreated empty, the way purgeRuns leaves its directory: the next write
+  // needs somewhere to go, and a missing parent fails in a way that reads as a
+  // bug rather than as a clean slate.
+  await mkdir(paths.runs, { recursive: true });
+  await mkdir(paths.models, { recursive: true });
   return { freedBytes };
 };
 

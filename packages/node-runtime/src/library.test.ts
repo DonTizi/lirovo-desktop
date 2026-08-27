@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -121,20 +121,38 @@ describe("purgeRuns", () => {
 });
 
 describe("purgeEverything", () => {
-  it("takes the whole folder and leaves it empty, not missing", async () => {
+  it("empties everything it owns and leaves the trees in place", async () => {
     await seed(2);
     await mkdir(paths.models, { recursive: true });
     await writeFile(path.join(paths.models, "ggml.bin"), "m".repeat(100));
 
     const { freedBytes } = await purgeEverything(paths);
     expect(freedBytes).toBe(2100);
-    // Recreated: the next write needs somewhere to go, and a missing parent
-    // fails in a way that reads as a bug rather than as a clean slate.
-    await expect(readdir(paths.data)).resolves.toEqual([]);
+    // Empty, not missing: the next write needs somewhere to go, and a missing
+    // parent fails in a way that reads as a bug rather than as a clean slate.
+    await expect(readdir(paths.runs)).resolves.toEqual([]);
+    await expect(readdir(paths.models)).resolves.toEqual([]);
   });
 
   it("is safe on a machine that has nothing", async () => {
     await expect(purgeEverything(paths)).resolves.toEqual({ freedBytes: 0 });
+  });
+
+  it("removes only what this app created, never a stranger's file in the same folder", async () => {
+    // `LIROVO_DATA_DIR` is an env var. A recursive delete of whatever it points
+    // at turns `LIROVO_DATA_DIR=$HOME` plus one confirmation into an erased
+    // home directory, so the delete names its children instead.
+    await mkdir(path.join(paths.data, "Documents"), { recursive: true });
+    await writeFile(path.join(paths.data, "Documents", "thesis.pdf"), "years of work");
+    await writeFile(path.join(paths.data, ".zshrc"), "not ours");
+    await mkdir(paths.runs, { recursive: true });
+    await writeFile(path.join(paths.runs, "run_1"), "ours");
+
+    await purgeEverything(paths);
+
+    await expect(readFile(path.join(paths.data, "Documents", "thesis.pdf"), "utf8")).resolves.toBe("years of work");
+    await expect(readFile(path.join(paths.data, ".zshrc"), "utf8")).resolves.toBe("not ours");
+    expect(await readdir(paths.runs)).toEqual([]);
   });
 });
 

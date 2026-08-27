@@ -110,35 +110,7 @@ export const engineMessageSchema = z.discriminatedUnion("kind", [
 ]);
 export type EngineMessage = z.infer<typeof engineMessageSchema>;
 
-export const CHANNELS = {
-  doctor: "lirovo:doctor",
-  extract: "lirovo:extract",
-  cancel: "lirovo:cancel",
-  runDetail: "lirovo:run-detail",
-  listRuns: "lirovo:list-runs",
-  pickFile: "lirovo:pick-file",
-  inspect: "lirovo:inspect",
-  listSchemas: "lirovo:list-schemas",
-  saveSchema: "lirovo:save-schema",
-  schemaRevisions: "lirovo:schema-revisions",
-  archiveSchema: "lirovo:archive-schema",
-  runArtifacts: "lirovo:run-artifacts",
-  install: "lirovo:install",
-  storage: "lirovo:storage",
-  purge: "lirovo:purge",
-  reveal: "lirovo:reveal",
-  updateState: "lirovo:update-state",
-  updateCheck: "lirovo:update-check",
-  updateDownload: "lirovo:update-download",
-  updateInstall: "lirovo:update-install",
-  updateChannel: "lirovo:update-channel",
-  updateEvent: "lirovo:update-event",
-  busy: "lirovo:busy",
-  installProgress: "lirovo:install-progress",
-  preferences: "lirovo:preferences",
-  setDefaultBackend: "lirovo:set-default-backend",
-  engineEvent: "lirovo:engine-event",
-} as const;
+export { CHANNELS } from "./channels.js";
 
 /** One extracted value and the moments that prove it. */
 export interface ValueRow {

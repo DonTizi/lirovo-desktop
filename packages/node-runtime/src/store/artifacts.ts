@@ -18,9 +18,38 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
  * artifact or nothing — never a half-written file that a resumed run would
  * happily treat as complete.
  */
+/**
+ * A run id is a directory name, so it has to look like one.
+ *
+ * `run_` and lowercase base32 is the whole alphabet `makeId` produces. The
+ * check is here rather than only at the IPC boundary because this is the layer
+ * that joins the value into a path: a caller that forgets to validate should
+ * not be able to reach outside `runs/` with `..`, and there is more than one
+ * caller.
+ */
+const RUN_ID = /^run_[0-9a-hjkmnp-tv-z]+$/;
+
+const dirName = (runId: string): string => {
+  if (!RUN_ID.test(runId)) {
+    throw new LirovoError("ARTIFACT_MISSING", `not a run id: ${JSON.stringify(runId)}`);
+  }
+  return runId;
+};
+
 export const createFsArtifactStore = (root: string): ArtifactStore => {
-  const dirFor = (runId: string): string => path.join(root, runId);
-  const full = (runId: string, relPath: string): string => path.join(dirFor(runId), relPath);
+  const dirFor = (runId: string): string => path.join(root, dirName(runId));
+  const full = (runId: string, relPath: string): string => {
+    const target = path.resolve(dirFor(runId), relPath);
+    const base = path.resolve(dirFor(runId));
+    // Belt and braces: the id is validated above, and the joined path is
+    // checked to still be inside the run's own directory. `relPath` comes from
+    // ARTIFACT_PATHS today, and this stays true if it ever comes from anywhere
+    // else.
+    if (target !== base && !target.startsWith(`${base}${path.sep}`)) {
+      throw new LirovoError("ARTIFACT_MISSING", `path escapes the run directory: ${relPath}`);
+    }
+    return target;
+  };
 
   const writeAtomic = async (target: string, write: (tmp: string) => Promise<void>): Promise<void> => {
     await mkdir(path.dirname(target), { recursive: true });

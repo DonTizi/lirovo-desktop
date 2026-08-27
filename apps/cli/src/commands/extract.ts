@@ -22,6 +22,7 @@ import {
   createFsArtifactStore,
   createRunStore,
   createSettingsStore,
+  holdLease,
   openDatabase,
   persistExtraction,
   persistManifest,
@@ -159,6 +160,12 @@ export const extractCommand = async (
   // desktop app on one laptop are two writers, and "same host" would let them
   // take each other's runs.
   const owner = `${hostname()}:${process.pid}`;
+  // Renewed while the run is in flight, released in the `finally`. Without it
+  // the sixty-second lease expires under every real extraction.
+  //
+  // A holder, not a `let`: the assignment happens inside `onIngested`, and
+  // TypeScript will not carry a closure's assignment out to the `finally`.
+  const lease: { release: (() => void) | null } = { release: null };
 
   const controller = new AbortController();
   const onSigint = (): void => {
@@ -180,6 +187,9 @@ export const extractCommand = async (
       if (!runs.claim(opts.resumeRunId, owner)) {
         throw new LirovoError("RUN_ALREADY_CLAIMED", `${opts.resumeRunId} is held by another process`);
       }
+      // A resumed run took the lease by claiming it rather than creating it,
+      // and needs it held for exactly the same reason.
+      lease.release = holdLease(runs, opts.resumeRunId, owner);
     }
 
     const stages = await buildMediaStages({ exec: realExec, store, paths });
@@ -233,6 +243,7 @@ export const extractCommand = async (
         if (opts.resumeRunId !== null) return;
         const sourceId = runs.upsertSource(manifest, opts.source);
         runs.createRun(runId, sourceId, null, owner);
+        lease.release = holdLease(runs, runId, owner);
       },
     };
     const input = { runId, source: opts.source, frameCap: opts.frameCap, signal: controller.signal };
@@ -363,6 +374,7 @@ export const extractCommand = async (
         ? EXIT.unavailable
         : EXIT.failed;
   } finally {
+    lease.release?.();
     process.removeListener("SIGINT", onSigint);
     db.close();
   }

@@ -1,0 +1,21 @@
+# Advisories reach a public repo whether or not anyone is watching for them.
+#
+# `github-actions` is here for a reason that is easy to miss: the workflows pin
+# every action to a commit SHA, which is what stops a moved tag changing what
+# runs beside the signing certificate — and it also freezes them, so nothing
+# would ever be updated without this.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the toolchain rather than six. The build either works after
+      # the bump or it does not, and finding out once is enough.
+      build-tooling:
+        patterns: ["vite", "vitest", "@vitejs/*", "esbuild", "typescript", "turbo", "electron-builder"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

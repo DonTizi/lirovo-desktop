@@ -27,6 +27,7 @@ import {
   createSchemaStore,
   createSettingsStore,
   createStageLedger,
+  holdLease,
   installArtifact,
   purgeEverything,
   purgeRuns,
@@ -440,6 +441,9 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
 
   controller = new AbortController();
   const signal = controller.signal;
+  // A holder, not a `let`: the assignment happens inside `onIngested`, and
+  // TypeScript will not carry a closure's assignment out to the `finally`.
+  const lease: { release: (() => void) | null } = { release: null };
 
   try {
     const stages = await buildMediaStages({ exec: realExec, store, paths });
@@ -459,6 +463,11 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
         // The revision is what makes the result explainable later: without it a
         // run cannot say what it was asked for.
         runs.createRun(runId, sourceId, request.schemaRevisionId ?? null, owner);
+        // The lease is good for a minute and a run takes six. Held from the
+        // moment the row exists until the `finally` below, or the library
+        // reads a working extraction as stopped and another process is free
+        // to claim it.
+        lease.release = holdLease(runs, runId, owner);
       },
     };
 
@@ -521,6 +530,7 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
     });
     throw lirovo;
   } finally {
+    lease.release?.();
     controller = null;
     db.close();
   }

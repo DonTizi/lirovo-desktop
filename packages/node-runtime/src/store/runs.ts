@@ -198,3 +198,34 @@ export const createRunStore = (db: Db): RunStore => ({
     ).run(newId("artifact"), runId, kind, relPath, sha256, bytes, contentType, nowS());
   },
 });
+
+/**
+ * Hold the lease for as long as the work takes.
+ *
+ * A lease is good for sixty seconds. Nothing was renewing it, so every
+ * extraction longer than a minute — which is most of them; a twenty-minute
+ * talk takes six — read as `stopped` in the library while it was still
+ * running, and another process was free to claim it and write to the same
+ * artifacts.
+ *
+ * A third of the lease is the interval: two renewals may be lost to a sleeping
+ * machine or a busy event loop before anything else can take the run.
+ *
+ * Returns the stop function. Call it in a `finally`: a heartbeat that outlives
+ * its run keeps a finished run looking alive.
+ */
+export const holdLease = (
+  runs: Pick<RunStore, "renewLease">,
+  runId: string,
+  owner: string,
+  onLost?: () => void,
+): (() => void) => {
+  const timer = setInterval(() => {
+    // False means somebody else holds it now. Whoever asked to be told can
+    // stop; the caller that ignores it is no worse off than before.
+    if (!runs.renewLease(runId, owner)) onLost?.();
+  }, Math.floor(LEASE_MS / 3));
+  // Never the reason a process stays alive.
+  timer.unref?.();
+  return () => clearInterval(timer);
+};
