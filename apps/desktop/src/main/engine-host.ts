@@ -81,7 +81,7 @@ type Inbound =
   | { id: string; type: "schemaRevisions"; schemaId: string }
   | { id: string; type: "archiveSchema"; schemaId: string }
   | { id: string; type: "runArtifacts"; runId: string }
-  | { id: string; type: "install"; what: "whisper-model" | "yt-dlp" }
+  | { id: string; type: "install"; what: "whisper-model" | "yt-dlp"; model?: string }
   | { id: string; type: "storage" }
   | { id: string; type: "purge"; what: "runs" | "everything" }
   | { id: string; type: "preferences" }
@@ -334,13 +334,30 @@ const inspect = async (source: string): Promise<SourceInspection> => {
  * The verification lives in `installArtifact`; this only names what to fetch
  * and forwards the byte count so a 60MB model is not a frozen button.
  */
-const install = async (what: "whisper-model" | "yt-dlp"): Promise<InstallOutcome> => {
-  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(DEFAULT_WHISPER_MODEL_ID);
-  if (item === null) throw asLirovoError(new Error(`nothing known as ${what}`), "INTERNAL");
+const install = async (what: "whisper-model" | "yt-dlp", model?: string): Promise<InstallOutcome> => {
+  const id = model ?? DEFAULT_WHISPER_MODEL_ID;
+  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(id);
+  if (item === null) throw asLirovoError(new Error(`nothing known as ${what} ${id}`), "INTERNAL");
   const result = await installArtifact(item, paths, {
     onProgress: (p) => send({ kind: "install-progress", progress: { what, received: p.received, total: p.total } }),
   });
+  // A model that was downloaded and then not used is a 574MB no-op. Choosing
+  // it IS installing it, so the setting moves with the file.
+  if (what === "whisper-model") setWhisperModel(id);
   return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
+};
+
+/**
+ * Point the loader at the chosen model.
+ *
+ * `resolveModelPath` reads `LIROVO_WHISPER_MODEL` first, so writing it here is
+ * what makes the choice take effect in this process — the setting is the
+ * durable record, the variable is how it reaches the code that opens the file.
+ */
+const setWhisperModel = (id: string): void => {
+  withDb((db) => createSettingsStore(db).set("whisper_model", id));
+  const spec = whisperModelInstallable(id);
+  if (spec !== null) process.env["LIROVO_WHISPER_MODEL"] = pathJoin(paths.data, spec.relPath);
 };
 
 /** Bytes under a directory, or zero when it is not there yet. */
@@ -411,9 +428,20 @@ const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number 
   return { freedBytes: freed };
 };
 
-const preferences = (): Preferences => ({
-  defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend")),
-});
+const preferences = (): Preferences =>
+  withDb((db) => {
+    const settings = createSettingsStore(db);
+    return {
+      defaultBackendId: settings.get("default_backend"),
+      whisperModelId: settings.get("whisper_model"),
+    };
+  });
+
+// On boot, honour the model the user chose last time.
+{
+  const chosen = preferences().whisperModelId;
+  if (chosen !== null) setWhisperModel(chosen);
+}
 
 const setDefaultBackend = (backendId: string | null): Preferences => {
   withDb((db) => createSettingsStore(db).set("default_backend", backendId));
@@ -554,7 +582,7 @@ const handle = async (message: Inbound): Promise<unknown> => {
     case "runArtifacts":
       return runArtifacts(message.runId);
     case "install":
-      return install(message.what);
+      return install(message.what, message.model);
     case "storage":
       return storage();
     case "purge":

@@ -48,8 +48,8 @@ const api = {
   pickFile: (): Promise<Result<string | null>> => ipcRenderer.invoke(CHANNELS.pickFile),
 
   /** Fetch a dependency this app can install itself. Verified before it lands. */
-  install: (what: "whisper-model" | "yt-dlp"): Promise<Result<InstallOutcome>> =>
-    ipcRenderer.invoke(CHANNELS.install, { what }),
+  install: (what: "whisper-model" | "yt-dlp", model?: string): Promise<Result<InstallOutcome>> =>
+    ipcRenderer.invoke(CHANNELS.install, { what, ...(model === undefined ? {} : { model }) }),
 
   /** Bytes as they arrive, so a 60MB model is not a frozen button. */
   onInstallProgress: (callback: (p: { what: string; received: number; total: number | null }) => void): (() => void) => {

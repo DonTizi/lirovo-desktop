@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Copy, Download, FolderOpen, Loader2, MoreHorizontal, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  FolderOpen,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import type { Fix } from "@lirovo/contracts";
-import type { StorageReport } from "../../main/ipc.js";
+import { DEFAULT_WHISPER_MODEL_ID, WHISPER_MODELS } from "@lirovo/core";
+import type { Preferences, StorageReport } from "../../main/ipc.js";
 import { Hero } from "./hero";
 import { Mark } from "./logos";
 import { Skeleton } from "./primitives";
@@ -143,6 +155,7 @@ const toEntries = (report: SystemReport): Entry[] => {
 };
 
 const GROUPS = ["Media", "Transcription", "Models"] as const;
+const RANK: Record<Health, number> = { off: 0, warn: 1, ok: 2 };
 
 /** Copy-to-clipboard with its own confirmation. */
 function CopyCommand({ fix }: { fix: Fix }): JSX.Element {
@@ -204,6 +217,59 @@ function InstallButton({ what, onDone }: { what: "whisper-model" | "yt-dlp"; onD
     >
       {working ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
       {working ? (pct === null ? "downloading" : `${pct}%`) : "Install"}
+    </button>
+  );
+}
+
+/**
+ * One button for every fixable thing at once.
+ *
+ * On a fresh Mac two rows are red and both are fetchable, and asking someone
+ * to find and press two buttons to reach a working app is asking them to do
+ * the app's job. The per-row buttons stay for the case where only one is
+ * wrong.
+ */
+function InstallAll({
+  items,
+  onDone,
+}: {
+  items: readonly ("whisper-model" | "yt-dlp")[];
+  onDone: () => void;
+}): JSX.Element {
+  const [working, setWorking] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const unique = [...new Set(items)];
+
+  if (failed !== null) {
+    return (
+      <span className="text-danger-text text-xs" title={failed}>
+        {failed.slice(0, 48)}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      disabled={working}
+      onClick={() => {
+        setWorking(true);
+        void (async () => {
+          for (const what of unique) {
+            const answer = await window.lirovo.install(what);
+            if (!answer.ok) {
+              setFailed(answer.error.message);
+              setWorking(false);
+              return;
+            }
+          }
+          setWorking(false);
+          onDone();
+        })();
+      }}
+      className="liq-solid liq-solid-brand flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
+    >
+      {working ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+      {working ? "Installing" : unique.length === 1 ? "Install it" : `Install ${unique.length}`}
     </button>
   );
 }
@@ -275,6 +341,84 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
   );
 }
 
+/**
+ * Which speech model transcribes.
+ *
+ * The only genuine choice on this page: English-only is twice as fast and
+ * useless for a French keynote, and the large one is ten times the download
+ * for accuracy most talks do not need. Choosing one that is not downloaded
+ * downloads it — a radio button that silently does nothing until you find a
+ * separate Install elsewhere is two steps pretending to be one.
+ */
+function SpeechModel({
+  chosen,
+  onChosen,
+}: {
+  chosen: string | null;
+  onChosen: () => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const current = chosen ?? DEFAULT_WHISPER_MODEL_ID;
+
+  useEffect(
+    () =>
+      window.lirovo.onInstallProgress((p) => {
+        if (p.what !== "whisper-model" || p.total === null) return;
+        setPct(Math.min(100, Math.round((p.received / p.total) * 100)));
+      }),
+    [],
+  );
+
+  return (
+    <Card title="Speech model">
+      {WHISPER_MODELS.map((model) => {
+        const selected = model.id === current;
+        const working = busy === model.id;
+        return (
+          <button
+            key={model.id}
+            disabled={busy !== null}
+            onClick={() => {
+              setBusy(model.id);
+              setPct(0);
+              void window.lirovo.install("whisper-model", model.id).then(() => {
+                setBusy(null);
+                onChosen();
+              });
+            }}
+            className={cn(
+              "border-hairline hover:bg-elevated flex w-full items-center gap-3 border-b px-4 py-2.5 text-left transition-colors last:border-b-0",
+              selected && "bg-elevated",
+            )}
+          >
+            <span
+              className={cn(
+                "grid size-4 shrink-0 place-items-center rounded-full border",
+                selected ? "border-ink-strong" : "border-line",
+              )}
+            >
+              {selected && <span className="bg-ink-strong size-2 rounded-full" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="text-ink-strong block truncate text-[13px] font-medium">{model.label}</span>
+              <span className="text-ink-subtle block truncate text-xs">{model.about}</span>
+            </span>
+            {working && (
+              <span className="text-ink-subtle shrink-0 text-xs tabular-nums">
+                {pct === null ? "…" : `${pct}%`}
+              </span>
+            )}
+          </button>
+        );
+      })}
+      <p className="border-hairline text-ink-subtle border-t px-4 py-2 text-xs">
+        Picking one downloads it if it is not here yet. Nothing leaves this Mac either way.
+      </p>
+    </Card>
+  );
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
     <section className="border-hairline bg-base overflow-hidden rounded-xl border">
@@ -316,24 +460,32 @@ export function SettingsPage({
   checking: boolean;
 }): JSX.Element {
   const [query, setQuery] = useState("");
-  const [group, setGroup] = useState<string | null>(null);
   const [storage, setStorage] = useState<StorageReport | null>(null);
+  const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const loadStorage = useCallback(() => {
     void window.lirovo.storage().then((answer) => {
       if (answer.ok) setStorage(answer.value);
     });
+    void window.lirovo.preferences().then((answer) => {
+      if (answer.ok) setPrefs(answer.value);
+    });
   }, []);
   useEffect(loadStorage, [loadStorage]);
+  // The report is refetched after an install; the rail has to follow it.
+  useEffect(loadStorage, [loadStorage, report]);
 
   const entries = useMemo(() => (report === null ? [] : toEntries(report)), [report]);
   const needle = query.trim().toLowerCase();
-  const shown = entries.filter(
-    (e) =>
-      (group === null || e.group === group) &&
-      (needle === "" || [e.name, e.role, e.detail, e.state].join(" ").toLowerCase().includes(needle)),
-  );
+  const shown = entries
+    .filter((e) => needle === "" || [e.name, e.role, e.detail, e.state].join(" ").toLowerCase().includes(needle))
+    // Broken first inside each group. A list in declaration order buries the
+    // one row that needs anything among the six that do not.
+    .sort((a, b) => RANK[a.health] - RANK[b.health]);
+
+  const needsWork = entries.filter((e) => e.health !== "ok");
+  const installable = needsWork.filter((e) => e.fetchable !== null);
 
   const purge = (what: "runs" | "everything"): void => {
     void window.lirovo.purge(what).then((answer) => {
@@ -352,8 +504,33 @@ export function SettingsPage({
     <div className="pb-16">
       <Hero title="Settings" sub="What this Mac can do, where the data lives, and how to remove it." />
 
-      <div className="mt-10 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] lg:items-start">
+      {/* Nothing when nothing is wrong. A banner that is always there is a
+          banner nobody reads on the day it matters. */}
+      {needsWork.length > 0 && (
+        <section className="border-warning/30 bg-warning-tint/40 mt-8 flex flex-wrap items-center gap-3 rounded-xl border px-5 py-4">
+          <TriangleAlert className="text-warning-text size-4 shrink-0" strokeWidth={1.75} />
+          <span className="text-warning-text min-w-0 flex-1 text-sm font-medium">
+            {needsWork.length === 1
+              ? `${needsWork[0]?.name} needs attention`
+              : `${needsWork.length} components need attention`}
+            <span className="text-ink-label ml-2 font-normal">
+              {needsWork.map((e) => e.name).join(", ")}
+            </span>
+          </span>
+          {installable.length > 0 && (
+            <InstallAll items={installable.map((e) => e.fetchable as "whisper-model" | "yt-dlp")} onDone={onRecheck} />
+          )}
+        </section>
+      )}
+
+      <div className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] lg:items-start">
         <section className="border-hairline bg-base overflow-hidden rounded-xl border">
+          <div className="border-hairline flex items-center justify-between gap-2 border-b px-4 py-2.5">
+            <h3 className="text-sm font-semibold">Components</h3>
+            <span className="text-ink-subtle text-xs tabular-nums">
+              {entries.filter((e) => e.health === "ok").length} of {entries.length} ready
+            </span>
+          </div>
           <div className="border-hairline flex flex-wrap items-center gap-2 border-b px-3 py-2">
             <label className="shadow-control focus-within:shadow-[0_0_0_1px_var(--kumo-focus)] bg-base flex h-9 min-w-48 flex-1 items-center gap-2 rounded-lg px-3">
               <Search className="text-ink-placeholder size-4 shrink-0" />
@@ -365,20 +542,9 @@ export function SettingsPage({
                 className="text-ink placeholder:text-ink-placeholder min-w-0 flex-1 bg-transparent outline-none"
               />
             </label>
-            <div className="flex items-center gap-1">
-              {[null, ...GROUPS].map((g) => (
-                <button
-                  key={g ?? "all"}
-                  onClick={() => setGroup(g)}
-                  className={cn(
-                    "h-9 rounded-lg px-2.5 text-[13px] transition-colors",
-                    group === g ? "bg-fill-hover text-ink-strong font-medium" : "text-ink-label hover:bg-elevated",
-                  )}
-                >
-                  {g ?? "All"}
-                </button>
-              ))}
-            </div>
+            {/* No filter chips: the group headers below already ARE the
+                categories, and two controls for one distinction is one too
+                many. Search covers the case a header cannot. */}
             <button
               onClick={onRecheck}
               disabled={checking}
@@ -436,9 +602,17 @@ export function SettingsPage({
                             </span>
                           </td>
                           <td className="border-hairline whitespace-nowrap border-b px-3 py-2.5">
-                            <span className="flex items-center gap-1.5 text-xs">
+                            {/* A dot alone for the healthy ones. Seven rows
+                                that all say "Ready" teach the eye to skip the
+                                column that will one day say something else. */}
+                            <span
+                              className={cn(
+                                "flex items-center gap-1.5 text-xs",
+                                entry.health === "ok" ? "text-ink-subtle" : "text-ink-strong font-medium",
+                              )}
+                            >
                               <span className={cn("size-1.5 rounded-full", DOT[entry.health])} />
-                              {entry.state}
+                              {entry.health === "ok" ? "" : entry.state}
                             </span>
                           </td>
                           <td
@@ -505,40 +679,56 @@ export function SettingsPage({
             )}
           </Card>
 
-          <Card title="Danger zone">
-            <div className="grid gap-3 px-4 py-3">
-              <div>
-                <p className="text-ink-strong text-[13px] font-medium">Delete every extraction</p>
-                <p className="text-ink-subtle mt-0.5 text-xs">
-                  Runs, frames, transcripts and graphs. Schemas, settings and the downloaded model stay.
-                </p>
-                <button
-                  onClick={() => purge("runs")}
-                  className="border-hairline bg-base hover:bg-fill-hover mt-2 flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors"
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete extractions
-                </button>
-              </div>
-              <div className="border-hairline border-t pt-3">
-                <p className="text-danger-text text-[13px] font-medium">Remove everything</p>
-                <p className="text-ink-subtle mt-0.5 text-xs">
-                  The whole folder: database, extractions, schemas, the speech model and any tool this app installed.
-                  This is what uninstall means for an app whose state is one directory.
-                </p>
-                <button
-                  onClick={() => purge("everything")}
-                  className="border-danger-text/30 bg-danger-tint/40 text-danger-text hover:bg-danger-tint mt-2 flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors"
-                >
-                  <Trash2 className="size-3.5" />
-                  Remove everything
-                </button>
-              </div>
-              {note !== null && <p className="text-ink-subtle text-xs">{note}</p>}
-            </div>
-          </Card>
+          <SpeechModel chosen={prefs?.whisperModelId ?? null} onChosen={onRecheck} />
         </div>
       </div>
+
+      {/* Last on the page, and only after everything safe. A destructive
+          control beside the one you came to use is a control that gets hit by
+          the pointer that was aiming at its neighbour. */}
+      <section className="border-danger-text/25 mt-10 overflow-hidden rounded-xl border">
+        <div className="border-danger-text/25 bg-danger-tint/30 border-b px-5 py-2.5">
+          <h3 className="text-danger-text text-sm font-semibold">Danger zone</h3>
+        </div>
+        <div className="bg-base">
+          <div className="border-hairline flex flex-wrap items-center gap-4 border-b px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-ink-strong text-[13px] font-medium">Delete every extraction</p>
+              <p className="text-ink-subtle mt-0.5 text-xs">
+                Runs, frames, transcripts and graphs
+                {storage === null ? "" : ` — ${storage.runCount} of them, ${bytes(storage.runsBytes)}`}. Schemas,
+                settings and the speech model stay.
+              </p>
+            </div>
+            <button
+              onClick={() => purge("runs")}
+              className="border-hairline bg-base hover:bg-fill-hover flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors"
+            >
+              <Trash2 className="size-3.5" />
+              Delete extractions
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-ink-strong text-[13px] font-medium">Remove everything</p>
+              <p className="text-ink-subtle mt-0.5 text-xs">
+                The whole folder: database, extractions, schemas, the speech model and any tool this app installed.
+                That is what uninstall means for an app whose entire state is one directory.
+              </p>
+            </div>
+            <button
+              onClick={() => purge("everything")}
+              className="border-danger-text/30 bg-danger-tint/40 text-danger-text hover:bg-danger-tint flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors"
+            >
+              <Trash2 className="size-3.5" />
+              Remove everything
+            </button>
+          </div>
+        </div>
+        {note !== null && (
+          <p className="border-danger-text/25 bg-base text-ink-subtle border-t px-5 py-2 text-xs">{note}</p>
+        )}
+      </section>
     </div>
   );
 }

@@ -52,7 +52,11 @@ export interface StorageReport {
 }
 
 /** Which of the two fetchable dependencies to install. */
-export const installSchema = z.object({ what: z.enum(["whisper-model", "yt-dlp"]) });
+export const installSchema = z.object({
+  what: z.enum(["whisper-model", "yt-dlp"]),
+  /** Which speech model. Ignored for anything else. */
+  model: z.string().optional(),
+});
 
 export interface InstallOutcome {
   readonly what: string;
@@ -66,6 +70,8 @@ export const defaultBackendSchema = z.object({ backendId: z.string().min(1).null
 export interface Preferences {
   /** Which model runs the next extraction, when the user has said. */
   readonly defaultBackendId: string | null;
+  /** Which speech model transcribes, when more than one is installed. */
+  readonly whisperModelId: string | null;
 }
 
 export interface SourceInspection {

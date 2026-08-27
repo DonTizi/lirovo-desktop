@@ -181,7 +181,10 @@ app.whenReady().then(() => {
   );
   ipcMain.handle(
     CHANNELS.install,
-    guard((payload) => ask({ type: "install", what: installSchema.parse(payload).what })),
+    guard((payload) => {
+      const { what, model } = installSchema.parse(payload);
+      return ask({ type: "install", what, ...(model === undefined ? {} : { model }) });
+    }),
   );
   ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
 

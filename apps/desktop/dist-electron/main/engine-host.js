@@ -10638,13 +10638,20 @@ const inspect = async (source) => {
     return { kind: "file", label: "file", title: null, durationS: null, bytes: null, problem: "no such file" };
   }
 };
-const install = async (what) => {
-  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(DEFAULT_WHISPER_MODEL_ID);
-  if (item === null) throw asLirovoError(new Error(`nothing known as ${what}`), "INTERNAL");
+const install = async (what, model) => {
+  const id = model ?? DEFAULT_WHISPER_MODEL_ID;
+  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(id);
+  if (item === null) throw asLirovoError(new Error(`nothing known as ${what} ${id}`), "INTERNAL");
   const result = await installArtifact(item, paths, {
     onProgress: (p) => send({ kind: "install-progress", progress: { what, received: p.received, total: p.total } })
   });
+  if (what === "whisper-model") setWhisperModel(id);
   return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
+};
+const setWhisperModel = (id) => {
+  withDb((db) => createSettingsStore(db).set("whisper_model", id));
+  const spec = whisperModelInstallable(id);
+  if (spec !== null) process.env["LIROVO_WHISPER_MODEL"] = join(paths.data, spec.relPath);
 };
 const sizeOf = async (dir) => {
   const { readdir: readdir2, stat: stat2 } = await import("node:fs/promises");
@@ -10698,9 +10705,17 @@ const purge = async (what) => {
   });
   return { freedBytes: freed };
 };
-const preferences = () => ({
-  defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend"))
+const preferences = () => withDb((db) => {
+  const settings = createSettingsStore(db);
+  return {
+    defaultBackendId: settings.get("default_backend"),
+    whisperModelId: settings.get("whisper_model")
+  };
 });
+{
+  const chosen = preferences().whisperModelId;
+  if (chosen !== null) setWhisperModel(chosen);
+}
 const setDefaultBackend = (backendId) => {
   withDb((db) => createSettingsStore(db).set("default_backend", backendId));
   return preferences();
@@ -10813,7 +10828,7 @@ const handle = async (message) => {
     case "runArtifacts":
       return runArtifacts(message.runId);
     case "install":
-      return install(message.what);
+      return install(message.what, message.model);
     case "storage":
       return storage();
     case "purge":
