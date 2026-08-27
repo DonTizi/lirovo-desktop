@@ -28,4 +28,6 @@ export interface BinaryStatus {
   readonly version: string | null;
   readonly required: boolean;
   readonly why: string;
+  /** Present when the binary works but is old enough to have stopped working. */
+  readonly stale: string | null;
 }

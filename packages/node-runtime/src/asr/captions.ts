@@ -27,10 +27,31 @@ export const summarizeYtDlpFailure = (message: string): string => {
     .filter((line) => line.trim().startsWith("ERROR:"))
     .map((line) => line.replace(/^\s*ERROR:\s*/, "").trim());
   if (errors.length === 0) return message.split("\n")[0]?.trim() ?? message;
-  const joined = errors.join("; ");
-  return /HTTP Error 429|Too Many Requests/i.test(joined)
-    ? `the platform is rate-limiting subtitle downloads from this address (${joined})`
-    : joined;
+  return explainYtDlpError(errors.join("; "));
+};
+
+/**
+ * Say what the user can do about it.
+ *
+ * yt-dlp reports what the server said, which is accurate and useless: "HTTP
+ * Error 403: Forbidden" gives a person nothing to act on. Each of these
+ * conditions has a different fix, and naming the fix is the whole job of an
+ * error message.
+ */
+export const explainYtDlpError = (message: string): string => {
+  if (/HTTP Error 429|Too Many Requests/i.test(message)) {
+    return `the platform is rate-limiting downloads from this address — wait a few minutes (${message})`;
+  }
+  if (/HTTP Error 403|Forbidden|Sign in to confirm|nsig extraction/i.test(message)) {
+    return `the platform refused the download. This is usually an out-of-date yt-dlp: YouTube changes its player often and old builds stop working. Update it, then try again (${message})`;
+  }
+  if (/Video unavailable|This video is unavailable|Private video|members-only/i.test(message)) {
+    return `this video is not available to download — it may be private, deleted, or restricted (${message})`;
+  }
+  if (/is not a valid URL|Unsupported URL/i.test(message)) {
+    return `that link is not one yt-dlp knows how to open (${message})`;
+  }
+  return message;
 };
 
 export interface CaptionsDeps {

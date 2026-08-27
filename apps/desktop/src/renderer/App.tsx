@@ -2,22 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
+import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
 import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
+import { SchemaPicker } from "./components/SchemaPicker";
 import { cn } from "./lib/cn";
-
-const DEFAULT_SCHEMA = `{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["title", "topics"],
-  "properties": {
-    "title": { "type": "string" },
-    "topics": { "type": "array", "items": { "type": "string" } }
-  }
-}`;
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -121,7 +113,7 @@ export const App = (): JSX.Element => {
   const [tab, setTab] = useState<TabId>("overview");
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
-  const [schema, setSchema] = useState(DEFAULT_SCHEMA);
+  const [fields, setFields] = useState<FieldSpec[]>([...(SCHEMA_PRESETS[0]?.fields ?? [])]);
   const [running, setRunning] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +164,8 @@ export const App = (): JSX.Element => {
 
     const answer = await window.lirovo.extract({
       source: source.trim(),
-      schemaJson: schema.trim() === "" ? null : schema,
+      // No fields means transcribe and detect scenes, and fill nothing in.
+      schemaJson: fields.length === 0 ? null : JSON.stringify(compileSchema(fields)),
       backendId: null,
     });
     setRunning(false);
@@ -344,17 +337,7 @@ export const App = (): JSX.Element => {
                   <p className="border-hairline text-danger-text mt-3 border-t px-1 py-3 font-mono text-xs">{error}</p>
                 )}
 
-                <details className="group mt-4">
-                  <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-center text-xs uppercase tracking-wide transition-colors">
-                    Schema — leave empty to transcribe only
-                  </summary>
-                  <textarea
-                    className="border-line bg-surface-subtle text-ink focus:border-brand focus:bg-surface focus:ring-brand/20 mt-2 min-h-[132px] w-full rounded-lg border p-3 font-mono text-xs outline-none transition-colors focus:ring-2"
-                    value={schema}
-                    onChange={(e) => setSchema(e.target.value)}
-                    spellCheck={false}
-                  />
-                </details>
+                <SchemaPicker fields={fields} onChange={setFields} />
               </div>
 
               <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

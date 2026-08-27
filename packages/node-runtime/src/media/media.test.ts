@@ -9,6 +9,8 @@ import {
 import { parseProbe } from "./probe.js";
 import { isPartialDownload, isUrl, parseYtDlpPrints, sourceTypeOf } from "./ingest.js";
 import { durationTolerance } from "./normalize.js";
+import { STALE_AFTER_DAYS, versionAgeDays } from "../binaries.js";
+import { explainYtDlpError } from "../asr/captions.js";
 import { clusterByPhash } from "./dedup.js";
 import { hammingDistance, phash } from "./phash.js";
 
@@ -246,5 +248,52 @@ describe("durationTolerance", () => {
 
   it("does not fire on a container that rounds", () => {
     expect(19.014 - 19.013).toBeLessThan(durationTolerance(19.014));
+  });
+});
+
+describe("versionAgeDays", () => {
+  const on = (iso: string): Date => new Date(`${iso}T00:00:00Z`);
+
+  it("reads yt-dlp's date-shaped version", () => {
+    expect(versionAgeDays("2026.03.17", on("2026-08-27"))).toBe(163);
+    expect(versionAgeDays("2026.08.19", on("2026-08-27"))).toBe(8);
+  });
+
+  it("accepts a single-digit month or day", () => {
+    expect(versionAgeDays("2026.3.7", on("2026-03-17"))).toBe(10);
+  });
+
+  it("returns null for a version that is not a date", () => {
+    // ffmpeg's "8.1.1" is a version, not a build date, and ageing it is
+    // meaningless — only yt-dlp goes stale in a way that stops it working.
+    expect(versionAgeDays("8.1.1")).toBeNull();
+    expect(versionAgeDays(null)).toBeNull();
+  });
+
+  it("flags what the user actually hit", () => {
+    expect(versionAgeDays("2026.03.17", on("2026-08-27"))).toBeGreaterThan(STALE_AFTER_DAYS);
+  });
+});
+
+describe("explainYtDlpError", () => {
+  it("turns a status code into the thing to do about it", () => {
+    // "HTTP Error 403: Forbidden" is accurate and useless.
+    const out = explainYtDlpError("unable to download video data: HTTP Error 403: Forbidden");
+    expect(out).toContain("out-of-date yt-dlp");
+    expect(out).toContain("403");
+  });
+
+  it("separates an unavailable video from a broken tool", () => {
+    const out = explainYtDlpError("Video unavailable");
+    expect(out).toContain("private, deleted, or restricted");
+    expect(out).not.toContain("out-of-date");
+  });
+
+  it("names rate limiting as something that passes", () => {
+    expect(explainYtDlpError("HTTP Error 429: Too Many Requests")).toContain("wait a few minutes");
+  });
+
+  it("passes an unrecognised failure through rather than inventing a cause", () => {
+    expect(explainYtDlpError("something nobody has seen")).toBe("something nobody has seen");
   });
 });

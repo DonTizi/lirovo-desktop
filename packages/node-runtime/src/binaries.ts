@@ -51,6 +51,23 @@ export const resolveBinary = async (
   return null;
 };
 
+/**
+ * How old a yt-dlp build is, from its date-shaped version.
+ *
+ * yt-dlp warns past ninety days for a reason: YouTube changes its player
+ * regularly and an old build stops being able to download, while still
+ * reading metadata perfectly well. That asymmetry is what makes it look like
+ * the video is fine right up until the download fails.
+ */
+export const versionAgeDays = (version: string | null, today = new Date()): number | null => {
+  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(version ?? "");
+  if (match === null) return null;
+  const built = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Math.floor((today.getTime() - built) / 86_400_000);
+};
+
+export const STALE_AFTER_DAYS = 90;
+
 /** First line that looks like a version, or the first non-empty line. */
 export const parseVersion = (output: string): string | null => {
   for (const line of output.split("\n")) {
@@ -67,7 +84,16 @@ export const makeBinaryProbe =
   async (spec: DependencySpec): Promise<BinaryStatus> => {
     const resolved = await resolveBinary(spec.id, paths, env);
     if (resolved === null) {
-      return { id: spec.id, found: false, path: null, origin: null, version: null, required: spec.required, why: spec.why };
+      return {
+        id: spec.id,
+        found: false,
+        path: null,
+        origin: null,
+        version: null,
+        required: spec.required,
+        why: spec.why,
+        stale: null,
+      };
     }
     // A binary that resolves but cannot run is a missing binary as far as the
     // pipeline is concerned, so the version probe is part of the check.
@@ -81,6 +107,9 @@ export const makeBinaryProbe =
     } catch {
       version = null;
     }
+    // Only yt-dlp goes stale in a way that matters: its version IS a date, and
+    // the platforms it reads change under it. ffmpeg from last year is fine.
+    const age = spec.id === "yt-dlp" ? versionAgeDays(version) : null;
     return {
       id: spec.id,
       found: true,
@@ -89,5 +118,9 @@ export const makeBinaryProbe =
       version,
       required: spec.required,
       why: spec.why,
+      stale:
+        age !== null && age > STALE_AFTER_DAYS
+          ? `${age} days old — platforms change and old builds stop being able to download`
+          : null,
     };
   };

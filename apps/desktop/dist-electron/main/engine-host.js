@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { createHash, randomBytes } from "node:crypto";
-import { access, constants, stat, readdir, mkdir, readFile, copyFile, rm, rename, writeFile, mkdtemp } from "node:fs/promises";
+import { access, constants, mkdtemp, readdir, readFile, rm, stat, mkdir, copyFile, rename, writeFile } from "node:fs/promises";
 import { homedir, tmpdir, hostname } from "node:os";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -3988,6 +3988,8 @@ const runDoctor = async (deps) => {
   const problems = [];
   const warnings = [];
   for (const dep of dependencies) {
+    if (dep.stale !== null)
+      warnings.push(`${dep.id} is ${dep.stale}`);
     if (dep.found)
       continue;
     const line = `${dep.id} not found — needed to ${dep.why}`;
@@ -4547,6 +4549,14 @@ const resolveBinary = async (id, paths2, env = process.env) => {
   }
   return null;
 };
+const versionAgeDays = (version, today = /* @__PURE__ */ new Date()) => {
+  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(version ?? "");
+  if (match === null)
+    return null;
+  const built = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Math.floor((today.getTime() - built) / 864e5);
+};
+const STALE_AFTER_DAYS = 90;
 const parseVersion = (output) => {
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
@@ -4560,7 +4570,16 @@ const parseVersion = (output) => {
 const makeBinaryProbe = (paths2, exec, env = process.env) => async (spec) => {
   const resolved = await resolveBinary(spec.id, paths2, env);
   if (resolved === null) {
-    return { id: spec.id, found: false, path: null, origin: null, version: null, required: spec.required, why: spec.why };
+    return {
+      id: spec.id,
+      found: false,
+      path: null,
+      origin: null,
+      version: null,
+      required: spec.required,
+      why: spec.why,
+      stale: null
+    };
   }
   let version = null;
   try {
@@ -4572,6 +4591,7 @@ const makeBinaryProbe = (paths2, exec, env = process.env) => async (spec) => {
   } catch {
     version = null;
   }
+  const age = spec.id === "yt-dlp" ? versionAgeDays(version) : null;
   return {
     id: spec.id,
     found: true,
@@ -4579,7 +4599,8 @@ const makeBinaryProbe = (paths2, exec, env = process.env) => async (spec) => {
     origin: resolved.origin,
     version,
     required: spec.required,
-    why: spec.why
+    why: spec.why,
+    stale: age !== null && age > STALE_AFTER_DAYS ? `${age} days old — platforms change and old builds stop being able to download` : null
   };
 };
 const HASH_SIZE = 8;
@@ -4727,6 +4748,190 @@ const probeMedia = async (exec, ffprobePath, mediaPath) => {
   ]);
   return parseProbe(stdout);
 };
+const TIMESTAMP = /(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/;
+const CUE_LINE = new RegExp(`^${TIMESTAMP.source}\\s*-->\\s*${TIMESTAMP.source}`);
+const INLINE_TIME = /<(\d{2}):(\d{2}):(\d{2})[.,](\d{3})>/g;
+const parseTimestamp = (h, m, s, ms) => Number(h) * 3600 + Number(m) * 60 + Number(s) + Number(ms) / 1e3;
+const readCues = (vtt) => {
+  const cues = [];
+  const lines = vtt.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = CUE_LINE.exec(lines[i] ?? "");
+    if (match === null)
+      continue;
+    const tStart = parseTimestamp(match[1], match[2], match[3], match[4]);
+    const tEnd = parseTimestamp(match[5], match[6], match[7], match[8]);
+    const body = [];
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const line = lines[j] ?? "";
+      if (line === "" || CUE_LINE.test(line))
+        break;
+      body.push(line);
+      i = j;
+    }
+    cues.push({ tStart, tEnd, raw: body.join("\n") });
+  }
+  return cues;
+};
+const stripTags = (s) => s.replace(INLINE_TIME, "").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+const parseInlineWords = (raw, cueStart, cueEnd) => {
+  if (!INLINE_TIME.test(raw))
+    return [];
+  INLINE_TIME.lastIndex = 0;
+  const words = [];
+  const parts = raw.split(/(<\d{2}:\d{2}:\d{2}[.,]\d{3}>)/);
+  let pending = cueStart;
+  for (const part of parts) {
+    const timeMatch = /^<(\d{2}):(\d{2}):(\d{2})[.,](\d{3})>$/.exec(part);
+    if (timeMatch !== null) {
+      pending = parseTimestamp(timeMatch[1], timeMatch[2], timeMatch[3], timeMatch[4]);
+      continue;
+    }
+    const text = stripTags(part);
+    if (text === "")
+      continue;
+    for (const token of text.split(" ")) {
+      if (token === "")
+        continue;
+      words.push({ w: token, tStart: pending, tEnd: cueEnd });
+    }
+  }
+  return words.map((word, i) => {
+    const next = words[i + 1];
+    return next === void 0 ? word : { ...word, tEnd: next.tStart };
+  });
+};
+const overlapLength = (seen, next) => {
+  const max = Math.min(seen.length, next.length);
+  for (let n = max; n > 0; n -= 1) {
+    let same = true;
+    for (let i = 0; i < n; i += 1) {
+      if (seen[seen.length - n + i] !== next[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same)
+      return n;
+  }
+  return 0;
+};
+const parseVtt = (vtt) => {
+  var _a;
+  const cues = readCues(vtt);
+  const segments = [];
+  const emitted = [];
+  let durationS = 0;
+  for (const cue of cues) {
+    durationS = Math.max(durationS, cue.tEnd);
+    const words = parseInlineWords(cue.raw, cue.tStart, cue.tEnd);
+    const tokens = words.length > 0 ? words.map((w) => w.w) : stripTags(cue.raw).split(" ").filter((t) => t !== "");
+    if (tokens.length === 0)
+      continue;
+    const skip = overlapLength(emitted, tokens);
+    const fresh = tokens.slice(skip);
+    if (fresh.length === 0)
+      continue;
+    const freshWords = words.length > 0 ? words.slice(skip) : [];
+    segments.push({
+      id: `seg_${segments.length}`,
+      speaker: null,
+      // A rolling cue's new words start where the first of them starts, not
+      // where the cue does — otherwise every segment claims the same instant.
+      tStart: ((_a = freshWords[0]) == null ? void 0 : _a.tStart) ?? cue.tStart,
+      tEnd: cue.tEnd,
+      text: fresh.join(" "),
+      words: freshWords
+    });
+    emitted.push(...fresh);
+  }
+  return { segments, text: segments.map((s) => s.text).join(" "), durationS };
+};
+const subtitleLanguages = (lang) => [.../* @__PURE__ */ new Set([`${lang}-orig`, lang, "en-orig", "en"])].join(",");
+const summarizeYtDlpFailure = (message) => {
+  var _a;
+  const errors = message.split("\n").filter((line) => line.trim().startsWith("ERROR:")).map((line) => line.replace(/^\s*ERROR:\s*/, "").trim());
+  if (errors.length === 0)
+    return ((_a = message.split("\n")[0]) == null ? void 0 : _a.trim()) ?? message;
+  return explainYtDlpError(errors.join("; "));
+};
+const explainYtDlpError = (message) => {
+  if (/HTTP Error 429|Too Many Requests/i.test(message)) {
+    return `the platform is rate-limiting downloads from this address — wait a few minutes (${message})`;
+  }
+  if (/HTTP Error 403|Forbidden|Sign in to confirm|nsig extraction/i.test(message)) {
+    return `the platform refused the download. This is usually an out-of-date yt-dlp: YouTube changes its player often and old builds stop working. Update it, then try again (${message})`;
+  }
+  if (/Video unavailable|This video is unavailable|Private video|members-only/i.test(message)) {
+    return `this video is not available to download — it may be private, deleted, or restricted (${message})`;
+  }
+  if (/is not a valid URL|Unsupported URL/i.test(message)) {
+    return `that link is not one yt-dlp knows how to open (${message})`;
+  }
+  return message;
+};
+const createCaptionsStrategy = (deps) => ({
+  name: "captions",
+  async isAvailable(req) {
+    if (req.sourceKind !== "url")
+      return false;
+    return await resolveBinary("yt-dlp", deps.paths, deps.env) !== null;
+  },
+  async transcribe(req) {
+    var _a;
+    const ytDlp = await resolveBinary("yt-dlp", deps.paths, deps.env);
+    if (ytDlp === null)
+      throw new LirovoError("DEPENDENCY_MISSING", "yt-dlp not found", { stage: "asr" });
+    const lang = req.language ?? "en";
+    const dir = await mkdtemp(path.join(tmpdir(), "lirovo-subs-"));
+    try {
+      let failure = null;
+      await deps.exec(ytDlp.path, [
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        // Ask for the requested language in every regional spelling, then
+        // fall back to English, then to whatever single track exists.
+        "--sub-langs",
+        subtitleLanguages(lang),
+        "--convert-subs",
+        "vtt",
+        "--no-playlist",
+        "--no-progress",
+        // Silences the "your version is older than 90 days" nag that would
+        // otherwise be the first thing in every failure message.
+        "--no-update",
+        "-o",
+        path.join(dir, "subs.%(ext)s"),
+        req.sourceUri
+      ], { cwd: dir, signal: req.signal, timeoutMs: 12e4 }).catch((error) => {
+        if (error instanceof LirovoError && error.code === "CANCELLED")
+          throw error;
+        failure = summarizeYtDlpFailure(error instanceof Error ? error.message : String(error));
+      });
+      const vttFile = (await readdir(dir)).find((f) => f.endsWith(".vtt"));
+      if (vttFile === void 0) {
+        throw new LirovoError("TRANSCRIBE_FAILED", failure ?? "no subtitle track published for this video", { stage: "asr" });
+      }
+      const parsed = parseVtt(await readFile(path.join(dir, vttFile), "utf8"));
+      if (parsed.segments.length === 0) {
+        throw new LirovoError("TRANSCRIBE_FAILED", "subtitle track was empty", { stage: "asr" });
+      }
+      return {
+        engine: "captions",
+        // The published track, not something we produced: naming it keeps the
+        // run manifest honest about where the words came from.
+        model: vttFile,
+        language: ((_a = /\.([a-z]{2}(-[A-Za-z]+)?)\.vtt$/.exec(vttFile)) == null ? void 0 : _a[1]) ?? null,
+        durationS: parsed.durationS,
+        text: parsed.text,
+        segments: parsed.segments
+      };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+});
 const isUrl = (source) => /^https?:\/\//i.test(source);
 const isPartialDownload = (name) => /\.(part|ytdl|temp|tmp)$/i.test(name) || /\.f\d+\./i.test(name);
 const sourceTypeOf = (source) => {
@@ -4810,9 +5015,8 @@ const ingest = async (input, deps) => {
     ], { cwd: deps.workDir, signal: input.signal, timeoutMs: 30 * 60 * 1e3 }).catch((error) => {
       if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT"))
         throw error;
-      throw new LirovoError("DOWNLOAD_FAILED", error instanceof Error ? error.message : String(error), {
-        stage: "ingest"
-      });
+      const raw = error instanceof Error ? error.message : String(error);
+      throw new LirovoError("DOWNLOAD_FAILED", explainYtDlpError(summarizeYtDlpFailure(raw)), { stage: "ingest" });
     });
     const printed = parseYtDlpPrints(stdout);
     title = printed.title;
@@ -7666,176 +7870,6 @@ const createStageLedger = (runs, runId) => ({
     return runs.beginAttempt(runId, stage, inputHash);
   },
   complete: (stage, attempt, outcome) => runs.completeAttempt(runId, stage, attempt, outcome)
-});
-const TIMESTAMP = /(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/;
-const CUE_LINE = new RegExp(`^${TIMESTAMP.source}\\s*-->\\s*${TIMESTAMP.source}`);
-const INLINE_TIME = /<(\d{2}):(\d{2}):(\d{2})[.,](\d{3})>/g;
-const parseTimestamp = (h, m, s, ms) => Number(h) * 3600 + Number(m) * 60 + Number(s) + Number(ms) / 1e3;
-const readCues = (vtt) => {
-  const cues = [];
-  const lines = vtt.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = CUE_LINE.exec(lines[i] ?? "");
-    if (match === null)
-      continue;
-    const tStart = parseTimestamp(match[1], match[2], match[3], match[4]);
-    const tEnd = parseTimestamp(match[5], match[6], match[7], match[8]);
-    const body = [];
-    for (let j = i + 1; j < lines.length; j += 1) {
-      const line = lines[j] ?? "";
-      if (line === "" || CUE_LINE.test(line))
-        break;
-      body.push(line);
-      i = j;
-    }
-    cues.push({ tStart, tEnd, raw: body.join("\n") });
-  }
-  return cues;
-};
-const stripTags = (s) => s.replace(INLINE_TIME, "").replace(/<\/?[a-z][^>]*>/gi, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
-const parseInlineWords = (raw, cueStart, cueEnd) => {
-  if (!INLINE_TIME.test(raw))
-    return [];
-  INLINE_TIME.lastIndex = 0;
-  const words = [];
-  const parts = raw.split(/(<\d{2}:\d{2}:\d{2}[.,]\d{3}>)/);
-  let pending = cueStart;
-  for (const part of parts) {
-    const timeMatch = /^<(\d{2}):(\d{2}):(\d{2})[.,](\d{3})>$/.exec(part);
-    if (timeMatch !== null) {
-      pending = parseTimestamp(timeMatch[1], timeMatch[2], timeMatch[3], timeMatch[4]);
-      continue;
-    }
-    const text = stripTags(part);
-    if (text === "")
-      continue;
-    for (const token of text.split(" ")) {
-      if (token === "")
-        continue;
-      words.push({ w: token, tStart: pending, tEnd: cueEnd });
-    }
-  }
-  return words.map((word, i) => {
-    const next = words[i + 1];
-    return next === void 0 ? word : { ...word, tEnd: next.tStart };
-  });
-};
-const overlapLength = (seen, next) => {
-  const max = Math.min(seen.length, next.length);
-  for (let n = max; n > 0; n -= 1) {
-    let same = true;
-    for (let i = 0; i < n; i += 1) {
-      if (seen[seen.length - n + i] !== next[i]) {
-        same = false;
-        break;
-      }
-    }
-    if (same)
-      return n;
-  }
-  return 0;
-};
-const parseVtt = (vtt) => {
-  var _a;
-  const cues = readCues(vtt);
-  const segments = [];
-  const emitted = [];
-  let durationS = 0;
-  for (const cue of cues) {
-    durationS = Math.max(durationS, cue.tEnd);
-    const words = parseInlineWords(cue.raw, cue.tStart, cue.tEnd);
-    const tokens = words.length > 0 ? words.map((w) => w.w) : stripTags(cue.raw).split(" ").filter((t) => t !== "");
-    if (tokens.length === 0)
-      continue;
-    const skip = overlapLength(emitted, tokens);
-    const fresh = tokens.slice(skip);
-    if (fresh.length === 0)
-      continue;
-    const freshWords = words.length > 0 ? words.slice(skip) : [];
-    segments.push({
-      id: `seg_${segments.length}`,
-      speaker: null,
-      // A rolling cue's new words start where the first of them starts, not
-      // where the cue does — otherwise every segment claims the same instant.
-      tStart: ((_a = freshWords[0]) == null ? void 0 : _a.tStart) ?? cue.tStart,
-      tEnd: cue.tEnd,
-      text: fresh.join(" "),
-      words: freshWords
-    });
-    emitted.push(...fresh);
-  }
-  return { segments, text: segments.map((s) => s.text).join(" "), durationS };
-};
-const subtitleLanguages = (lang) => [.../* @__PURE__ */ new Set([`${lang}-orig`, lang, "en-orig", "en"])].join(",");
-const summarizeYtDlpFailure = (message) => {
-  var _a;
-  const errors = message.split("\n").filter((line) => line.trim().startsWith("ERROR:")).map((line) => line.replace(/^\s*ERROR:\s*/, "").trim());
-  if (errors.length === 0)
-    return ((_a = message.split("\n")[0]) == null ? void 0 : _a.trim()) ?? message;
-  const joined = errors.join("; ");
-  return /HTTP Error 429|Too Many Requests/i.test(joined) ? `the platform is rate-limiting subtitle downloads from this address (${joined})` : joined;
-};
-const createCaptionsStrategy = (deps) => ({
-  name: "captions",
-  async isAvailable(req) {
-    if (req.sourceKind !== "url")
-      return false;
-    return await resolveBinary("yt-dlp", deps.paths, deps.env) !== null;
-  },
-  async transcribe(req) {
-    var _a;
-    const ytDlp = await resolveBinary("yt-dlp", deps.paths, deps.env);
-    if (ytDlp === null)
-      throw new LirovoError("DEPENDENCY_MISSING", "yt-dlp not found", { stage: "asr" });
-    const lang = req.language ?? "en";
-    const dir = await mkdtemp(path.join(tmpdir(), "lirovo-subs-"));
-    try {
-      let failure = null;
-      await deps.exec(ytDlp.path, [
-        "--skip-download",
-        "--write-subs",
-        "--write-auto-subs",
-        // Ask for the requested language in every regional spelling, then
-        // fall back to English, then to whatever single track exists.
-        "--sub-langs",
-        subtitleLanguages(lang),
-        "--convert-subs",
-        "vtt",
-        "--no-playlist",
-        "--no-progress",
-        // Silences the "your version is older than 90 days" nag that would
-        // otherwise be the first thing in every failure message.
-        "--no-update",
-        "-o",
-        path.join(dir, "subs.%(ext)s"),
-        req.sourceUri
-      ], { cwd: dir, signal: req.signal, timeoutMs: 12e4 }).catch((error) => {
-        if (error instanceof LirovoError && error.code === "CANCELLED")
-          throw error;
-        failure = summarizeYtDlpFailure(error instanceof Error ? error.message : String(error));
-      });
-      const vttFile = (await readdir(dir)).find((f) => f.endsWith(".vtt"));
-      if (vttFile === void 0) {
-        throw new LirovoError("TRANSCRIBE_FAILED", failure ?? "no subtitle track published for this video", { stage: "asr" });
-      }
-      const parsed = parseVtt(await readFile(path.join(dir, vttFile), "utf8"));
-      if (parsed.segments.length === 0) {
-        throw new LirovoError("TRANSCRIBE_FAILED", "subtitle track was empty", { stage: "asr" });
-      }
-      return {
-        engine: "captions",
-        // The published track, not something we produced: naming it keeps the
-        // run manifest honest about where the words came from.
-        model: vttFile,
-        language: ((_a = /\.([a-z]{2}(-[A-Za-z]+)?)\.vtt$/.exec(vttFile)) == null ? void 0 : _a[1]) ?? null,
-        durationS: parsed.durationS,
-        text: parsed.text,
-        segments: parsed.segments
-      };
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  }
 });
 const DEFAULT_WHISPER_MODEL = "ggml-base.en-q5_1.bin";
 const parseWhisperJson = (raw) => {

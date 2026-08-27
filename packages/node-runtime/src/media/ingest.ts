@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ArtifactStore, Exec, SourceManifest } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, LirovoError } from "@lirovo/contracts";
 import { probeMedia } from "./probe.js";
+import { explainYtDlpError, summarizeYtDlpFailure } from "../asr/captions.js";
 
 export interface IngestInput {
   readonly runId: string;
@@ -128,9 +129,10 @@ export const ingest = async (input: IngestInput, deps: IngestDeps): Promise<Inge
       { cwd: deps.workDir, signal: input.signal, timeoutMs: 30 * 60 * 1000 },
     ).catch((error: unknown) => {
       if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT")) throw error;
-      throw new LirovoError("DOWNLOAD_FAILED", error instanceof Error ? error.message : String(error), {
-        stage: "ingest",
-      });
+      // The raw failure is forty lines of banner and a server status code.
+      // Summarise it, then say what to do about it.
+      const raw = error instanceof Error ? error.message : String(error);
+      throw new LirovoError("DOWNLOAD_FAILED", explainYtDlpError(summarizeYtDlpFailure(raw)), { stage: "ingest" });
     });
 
     const printed = parseYtDlpPrints(stdout);

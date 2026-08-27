@@ -77,6 +77,7 @@ export const runDoctor = async (deps: DoctorDeps): Promise<DoctorReport> => {
   const warnings: string[] = [];
 
   for (const dep of dependencies) {
+    if (dep.stale !== null) warnings.push(`${dep.id} is ${dep.stale}`);
     if (dep.found) continue;
     const line = `${dep.id} not found — needed to ${dep.why}`;
     if (dep.required) problems.push(line);
