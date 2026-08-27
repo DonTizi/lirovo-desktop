@@ -3906,6 +3906,7 @@ objectType({
   fields: arrayType(fieldSpecSchema)
 });
 objectType({ schemaId: stringType().min(1) });
+objectType({ what: enumType(["whisper-model", "yt-dlp"]) });
 objectType({ backendId: stringType().min(1).nullable() });
 discriminatedUnionType("kind", [
   objectType({ kind: literalType("event"), event: pipelineEventSchema }),
@@ -3929,6 +3930,8 @@ const CHANNELS = {
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
   runArtifacts: "lirovo:run-artifacts",
+  install: "lirovo:install",
+  installProgress: "lirovo:install-progress",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event"
@@ -3946,6 +3949,16 @@ const api = {
   schemaRevisions: (schemaId) => ipcRenderer.invoke(CHANNELS.schemaRevisions, { schemaId }),
   archiveSchema: (schemaId) => ipcRenderer.invoke(CHANNELS.archiveSchema, { schemaId }),
   pickFile: () => ipcRenderer.invoke(CHANNELS.pickFile),
+  /** Fetch a dependency this app can install itself. Verified before it lands. */
+  install: (what) => ipcRenderer.invoke(CHANNELS.install, { what }),
+  /** Bytes as they arrive, so a 60MB model is not a frozen button. */
+  onInstallProgress: (callback) => {
+    const listener = (_e, payload) => callback(payload);
+    ipcRenderer.on(CHANNELS.installProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.installProgress, listener);
+    };
+  },
   preferences: () => ipcRenderer.invoke(CHANNELS.preferences),
   setDefaultBackend: (backendId) => ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
   /**

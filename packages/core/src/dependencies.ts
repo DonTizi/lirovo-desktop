@@ -53,7 +53,8 @@ export interface BinaryStatus {
   readonly found: boolean;
   /** Where it resolved from, so a user can tell bundled from Homebrew. */
   readonly path: string | null;
-  readonly origin: "bundled" | "path" | "homebrew" | null;
+  /** `installed` is this app's own verified download, under the data directory. */
+  readonly origin: "bundled" | "installed" | "path" | "homebrew" | null;
   readonly version: string | null;
   readonly required: boolean;
   readonly why: string;

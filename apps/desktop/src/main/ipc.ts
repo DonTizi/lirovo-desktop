@@ -38,6 +38,16 @@ export const saveSchemaRequestSchema = z.object({
 export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
 /** Null clears the choice and returns the app to picking the first available. */
+/** Which of the two fetchable dependencies to install. */
+export const installSchema = z.object({ what: z.enum(["whisper-model", "yt-dlp"]) });
+
+export interface InstallOutcome {
+  readonly what: string;
+  readonly path: string;
+  readonly bytes: number;
+  readonly alreadyPresent: boolean;
+}
+
 export const defaultBackendSchema = z.object({ backendId: z.string().min(1).nullable() });
 
 export interface Preferences {
@@ -81,6 +91,8 @@ export const CHANNELS = {
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
   runArtifacts: "lirovo:run-artifacts",
+  install: "lirovo:install",
+  installProgress: "lirovo:install-progress",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event",

@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import "node:child_process";
 import { homedir } from "node:os";
 import "node:fs/promises";
+import "node:stream/promises";
 import "node:sqlite";
 var util;
 (function(util2) {
@@ -3915,6 +3916,7 @@ const saveSchemaRequestSchema = objectType({
   fields: arrayType(fieldSpecSchema)
 });
 const schemaIdSchema = objectType({ schemaId: stringType().min(1) });
+const installSchema = objectType({ what: enumType(["whisper-model", "yt-dlp"]) });
 const defaultBackendSchema = objectType({ backendId: stringType().min(1).nullable() });
 discriminatedUnionType("kind", [
   objectType({ kind: literalType("event"), event: pipelineEventSchema }),
@@ -3938,6 +3940,8 @@ const CHANNELS = {
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
   runArtifacts: "lirovo:run-artifacts",
+  install: "lirovo:install",
+  installProgress: "lirovo:install-progress",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event"
@@ -6147,6 +6151,10 @@ const startEngine = () => {
       window == null ? void 0 : window.webContents.send(CHANNELS.engineEvent, msg.event);
       return;
     }
+    if (msg.kind === "install-progress") {
+      window == null ? void 0 : window.webContents.send(CHANNELS.installProgress, msg.progress);
+      return;
+    }
     const waiting = pending.get(msg.id);
     if (waiting === void 0) return;
     pending.delete(msg.id);
@@ -6241,6 +6249,10 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.runArtifacts,
     guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId }))
+  );
+  ipcMain.handle(
+    CHANNELS.install,
+    guard((payload) => ask({ type: "install", what: installSchema.parse(payload).what }))
   );
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
   ipcMain.handle(

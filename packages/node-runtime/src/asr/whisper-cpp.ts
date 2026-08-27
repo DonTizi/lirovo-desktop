@@ -1,5 +1,6 @@
 import { access, constants, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { AsrRequest, AsrStrategy, Exec, Transcript, TranscriptSegment } from "@lirovo/contracts";
 import { LirovoError } from "@lirovo/contracts";
@@ -48,8 +49,32 @@ export const parseWhisperJson = (raw: string): { segments: TranscriptSegment[]; 
   return { segments, text: segments.map((s) => s.text).join(" "), durationS };
 };
 
-export const resolveModelPath = (paths: LirovoPaths, env: NodeJS.ProcessEnv = process.env): string =>
-  env["LIROVO_WHISPER_MODEL"] ?? path.join(paths.models, DEFAULT_WHISPER_MODEL);
+/**
+ * The model file to load.
+ *
+ * The environment wins, then whichever file is actually in the models
+ * directory, then the default name. The middle step is what makes installing
+ * the multilingual or the large model mean anything: without it the loader
+ * asks for `base.en` no matter what was downloaded, and a French talk fails
+ * against an English-only model that the user deliberately replaced.
+ */
+export const resolveModelPath = (paths: LirovoPaths, env: NodeJS.ProcessEnv = process.env): string => {
+  const override = env["LIROVO_WHISPER_MODEL"];
+  if (override !== undefined) return override;
+  const preferred = path.join(paths.models, DEFAULT_WHISPER_MODEL);
+  if (existsSync(preferred)) return preferred;
+  try {
+    const present = readdirSync(paths.models)
+      .filter((f) => f.startsWith("ggml-") && f.endsWith(".bin"))
+      .sort();
+    const first = present[0];
+    if (first !== undefined) return path.join(paths.models, first);
+  } catch {
+    // No models directory yet: fall through to the default name, and let the
+    // caller report a missing file rather than a missing directory.
+  }
+  return preferred;
+};
 
 /**
  * Local transcription with whisper.cpp.

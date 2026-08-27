@@ -21,11 +21,14 @@ interface Resolved {
 }
 
 /**
- * Bundled first, then PATH, then Homebrew.
+ * Bundled, then what this app installed, then PATH, then Homebrew.
  *
  * Bundled wins so a signed build uses the binary it was notarised with rather
- * than whatever the user happens to have installed; Homebrew is last so a
- * developer machine still works with nothing bundled.
+ * than whatever the user happens to have installed. The app's own `bin`
+ * directory comes next: `lirovo install` downloads a verified yt-dlp there,
+ * and a Mac with no Homebrew has nothing on PATH to find — without this step
+ * the download lands somewhere nothing ever looks. Homebrew is last so a
+ * developer machine still works with nothing bundled and nothing installed.
  */
 export const resolveBinary = async (
   id: string,
@@ -36,6 +39,8 @@ export const resolveBinary = async (
     const bundled = path.join(paths.bundledBin, id);
     if (await isExecutable(bundled)) return { path: bundled, origin: "bundled" };
   }
+  const installed = path.join(paths.data, "bin", id);
+  if (await isExecutable(installed)) return { path: installed, origin: "installed" };
   for (const dir of (env["PATH"] ?? "").split(path.delimiter)) {
     if (dir === "") continue;
     const candidate = path.join(dir, id);
@@ -102,7 +107,14 @@ export const makeBinaryProbe =
     try {
       const { stdout, stderr } = await exec(resolved.path, spec.versionArgs, {
         env: { PATH: env["PATH"] ?? "" },
-        timeoutMs: 10_000,
+        // Thirty seconds, because yt-dlp's standalone macOS build is a
+        // PyInstaller bundle that unpacks itself on EVERY launch: measured at
+        // 9.7s to answer `--version`, cold or warm. At the old ten-second
+        // ceiling the probe raced it and usually lost, so a perfectly good
+        // binary reported no version — and with no version there is no date,
+        // and with no date the staleness warning that predicts the 403 can
+        // never fire.
+        timeoutMs: 30_000,
       });
       version = parseVersion(stdout || stderr);
     } catch {

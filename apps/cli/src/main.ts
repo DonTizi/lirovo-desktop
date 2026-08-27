@@ -1,12 +1,16 @@
 import { isLirovoError } from "@lirovo/contracts";
 import { boolFlag, parseArgs } from "./args.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { DEFAULT_WHISPER_MODEL_ID } from "@lirovo/core";
+import { installCommand } from "./commands/install.js";
 import { DEFAULT_FRAME_CAP, extractCommand } from "./commands/extract.js";
 import { EXIT, type ExitCode } from "./exit-codes.js";
 
 const HELP = `lirovo — local-first structured extraction for video
 
 usage
+  lirovo install [--model <id>]              fetch what this Mac is missing and can
+                                            be fetched: the speech model and yt-dlp
   lirovo doctor [--json]                    check dependencies, backends and paths
   lirovo extract <url|file> --schema <f>     transcribe, build the graph and fill
                                             the schema, with evidence per value
@@ -59,6 +63,11 @@ export const main = async (argv: readonly string[]): Promise<void> => {
   let code: ExitCode = EXIT.ok;
   try {
     switch (args.command) {
+      case "install": {
+        const model = args.flags["model"];
+        code = await installCommand({ model: typeof model === "string" ? model : DEFAULT_WHISPER_MODEL_ID, json }, out);
+        break;
+      }
       case "doctor":
         code = await doctorCommand({ json }, out);
         break;

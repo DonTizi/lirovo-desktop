@@ -2,13 +2,14 @@ var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { createHash, randomBytes } from "node:crypto";
-import { access, constants, mkdtemp, readdir, readFile, rm, stat, mkdir, copyFile, rename, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, rm, chmod, rename, stat, mkdtemp, readdir, readFile, copyFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir, hostname } from "node:os";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { createReadStream, mkdirSync } from "node:fs";
+import { createWriteStream, createReadStream, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { DatabaseSync } from "node:sqlite";
-import "node:stream";
 import "electron";
 const ID_PREFIXES = {
   source: "src",
@@ -4525,6 +4526,68 @@ const decompileSchema = (schema) => {
   }
   return fields;
 };
+const WHISPER_MODELS = [
+  {
+    id: "base.en",
+    file: "ggml-base.en-q5_1.bin",
+    label: "Base, English",
+    about: "60 MB · fast · English only",
+    sha256: "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
+    bytes: 59721011
+  },
+  {
+    id: "base",
+    file: "ggml-base-q5_1.bin",
+    label: "Base, every language",
+    about: "60 MB · fast · 99 languages",
+    sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+    bytes: 59707625
+  },
+  {
+    id: "large-v3-turbo",
+    file: "ggml-large-v3-turbo-q5_0.bin",
+    label: "Large v3 turbo",
+    about: "574 MB · slower · the most accurate",
+    sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    bytes: 574041195
+  }
+];
+const DEFAULT_WHISPER_MODEL_ID = "base.en";
+const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+const whisperModelInstallable = (id) => {
+  const model = WHISPER_MODELS.find((m) => m.id === id);
+  if (model === void 0)
+    return null;
+  return {
+    id: "whisper-model",
+    label: `Whisper — ${model.label}`,
+    why: "transcribe locally when there are no subtitles",
+    url: `${HF}/${model.file}`,
+    sha256: model.sha256,
+    bytes: model.bytes,
+    relPath: `models/${model.file}`,
+    executable: false
+  };
+};
+const YT_DLP = {
+  label: "yt-dlp",
+  url: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos",
+  sha256: {
+    fromSumsFile: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+    name: "yt-dlp_macos"
+  },
+  bytes: null,
+  relPath: "bin/yt-dlp",
+  executable: true
+};
+const sha256FromSumsFile = (contents, name) => {
+  for (const line of contents.split("\n")) {
+    const match = /^([0-9a-f]{64})\s+(.+?)\s*$/.exec(line.trim());
+    if (match !== null && match[2] === name)
+      return match[1];
+  }
+  return null;
+};
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1e3;
 const realExec = (bin, args, opts = {}) => new Promise((resolve, reject) => {
   var _a;
@@ -4623,6 +4686,9 @@ const resolveBinary = async (id, paths2, env = process.env) => {
     if (await isExecutable(bundled))
       return { path: bundled, origin: "bundled" };
   }
+  const installed = path.join(paths2.data, "bin", id);
+  if (await isExecutable(installed))
+    return { path: installed, origin: "installed" };
   for (const dir of (env["PATH"] ?? "").split(path.delimiter)) {
     if (dir === "")
       continue;
@@ -4676,7 +4742,14 @@ const makeBinaryProbe = (paths2, exec, env = process.env) => async (spec) => {
   try {
     const { stdout, stderr } = await exec(resolved.path, spec.versionArgs, {
       env: { PATH: env["PATH"] ?? "" },
-      timeoutMs: 1e4
+      // Thirty seconds, because yt-dlp's standalone macOS build is a
+      // PyInstaller bundle that unpacks itself on EVERY launch: measured at
+      // 9.7s to answer `--version`, cold or warm. At the old ten-second
+      // ceiling the probe raced it and usually lost, so a perfectly good
+      // binary reported no version — and with no version there is no date,
+      // and with no date the staleness warning that predicts the 403 can
+      // never fire.
+      timeoutMs: 3e4
     });
     version = parseVersion(stdout || stderr);
   } catch {
@@ -4698,6 +4771,71 @@ const makeBinaryProbe = (paths2, exec, env = process.env) => async (spec) => {
       command: resolved.origin === "homebrew" ? `brew upgrade ${spec.id}` : `${spec.id} -U`
     } : null
   };
+};
+const installArtifact = async (item, paths2, options = {}) => {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  const dest = path.join(paths2.data, item.relPath);
+  const partial = `${dest}.part`;
+  const expected = typeof item.sha256 === "string" ? item.sha256 : await resolveSum(item, doFetch);
+  const existing = await hashOf(dest).catch(() => null);
+  if (existing !== null && existing.sha256 === expected) {
+    return { path: dest, bytes: existing.bytes, sha256: existing.sha256, alreadyPresent: true };
+  }
+  await mkdir(path.dirname(dest), { recursive: true });
+  await rm(partial, { force: true });
+  const response = await doFetch(item.url, {
+    ...options.signal === void 0 ? {} : { signal: options.signal }
+  }).catch((error) => {
+    throw new LirovoError("DOWNLOAD_FAILED", `could not reach ${new URL(item.url).hostname}: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  if (!response.ok || response.body === null) {
+    throw new LirovoError("DOWNLOAD_FAILED", `${item.url} returned ${response.status}`);
+  }
+  const declared = Number(response.headers.get("content-length") ?? "");
+  const total = Number.isFinite(declared) && declared > 0 ? declared : item.bytes;
+  const hash = createHash("sha256");
+  let received = 0;
+  const source = Readable.fromWeb(response.body);
+  source.on("data", (chunk2) => {
+    var _a;
+    hash.update(chunk2);
+    received += chunk2.length;
+    (_a = options.onProgress) == null ? void 0 : _a.call(options, { received, total });
+  });
+  try {
+    await pipeline(source, createWriteStream(partial));
+  } catch (error) {
+    await rm(partial, { force: true });
+    throw new LirovoError("DOWNLOAD_FAILED", `${item.label} did not download completely: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const actual = hash.digest("hex");
+  if (actual !== expected) {
+    await rm(partial, { force: true });
+    throw new LirovoError("ARTIFACT_CHECKSUM_MISMATCH", `${item.label} downloaded but its checksum does not match — expected ${expected}, got ${actual}`);
+  }
+  if (item.executable)
+    await chmod(partial, 493);
+  await rename(partial, dest);
+  return { path: dest, bytes: received, sha256: actual, alreadyPresent: false };
+};
+const resolveSum = async (item, doFetch) => {
+  const spec = item.sha256;
+  const response = await doFetch(spec.fromSumsFile);
+  if (!response.ok) {
+    throw new LirovoError("DOWNLOAD_FAILED", `could not read the checksums for ${item.label}`);
+  }
+  const found = sha256FromSumsFile(await response.text(), spec.name);
+  if (found === null) {
+    throw new LirovoError("ARTIFACT_CHECKSUM_MISMATCH", `${spec.name} is not listed in ${spec.fromSumsFile} — refusing to install something unverified`);
+  }
+  return found;
+};
+const hashOf = async (file) => {
+  const { size } = await stat(file);
+  const hash = createHash("sha256");
+  for await (const chunk2 of createReadStream(file))
+    hash.update(chunk2);
+  return { sha256: hash.digest("hex"), bytes: size };
 };
 const HASH_SIZE = 8;
 const RESIZED_SIZE = 32;
@@ -8123,7 +8261,22 @@ const parseWhisperJson = (raw) => {
   }
   return { segments, text: segments.map((s) => s.text).join(" "), durationS };
 };
-const resolveModelPath = (paths2, env = process.env) => env["LIROVO_WHISPER_MODEL"] ?? path.join(paths2.models, DEFAULT_WHISPER_MODEL);
+const resolveModelPath = (paths2, env = process.env) => {
+  const override = env["LIROVO_WHISPER_MODEL"];
+  if (override !== void 0)
+    return override;
+  const preferred = path.join(paths2.models, DEFAULT_WHISPER_MODEL);
+  if (existsSync(preferred))
+    return preferred;
+  try {
+    const present = readdirSync(paths2.models).filter((f) => f.startsWith("ggml-") && f.endsWith(".bin")).sort();
+    const first = present[0];
+    if (first !== void 0)
+      return path.join(paths2.models, first);
+  } catch {
+  }
+  return preferred;
+};
 const createWhisperCppStrategy = (deps) => {
   const env = deps.env ?? process.env;
   return {
@@ -10485,6 +10638,14 @@ const inspect = async (source) => {
     return { kind: "file", label: "file", title: null, durationS: null, bytes: null, problem: "no such file" };
   }
 };
+const install = async (what) => {
+  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(DEFAULT_WHISPER_MODEL_ID);
+  if (item === null) throw asLirovoError(new Error(`nothing known as ${what}`), "INTERNAL");
+  const result = await installArtifact(item, paths, {
+    onProgress: (p) => send({ kind: "install-progress", progress: { what, received: p.received, total: p.total } })
+  });
+  return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
+};
 const preferences = () => ({
   defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend"))
 });
@@ -10599,6 +10760,8 @@ const handle = async (message) => {
       return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
     case "runArtifacts":
       return runArtifacts(message.runId);
+    case "install":
+      return install(message.what);
     case "preferences":
       return preferences();
     case "setDefaultBackend":

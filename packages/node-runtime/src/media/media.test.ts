@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { resolveBinary } from "../binaries.js";
 import {
   buildFilterChain,
   defaultThresholdFor,
@@ -324,5 +328,36 @@ describe("ffmpeg rate flag", () => {
 
   it("has a legacy flag to fall back to, for a binary older than 5.1", () => {
     expect(LEGACY_RATE_FLAG).toEqual(["-vsync", "vfr"]);
+  });
+});
+
+describe("where a binary is looked for", () => {
+  it("finds what the app installed itself, which is not on any PATH", async () => {
+    // `lirovo install` downloads a verified yt-dlp into <data>/bin. A Mac with
+    // no Homebrew has nothing on PATH to find, so without this step the
+    // download lands somewhere nothing ever looks and doctor still says
+    // "not found" right after a successful install.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    await mkdir(path.join(data, "bin"), { recursive: true });
+    const target = path.join(data, "bin", "yt-dlp");
+    await writeFile(target, "#!/bin/sh\necho hi\n");
+    await chmod(target, 0o755);
+
+    const paths = { data, runs: "", models: "", bundledBin: null, dbFile: "" };
+    const found = await resolveBinary("yt-dlp", paths, { PATH: "" });
+    expect(found?.path).toBe(target);
+    expect(found?.origin).toBe("installed");
+  });
+
+  it("prefers a bundled copy over an installed one", async () => {
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    for (const dir of ["bin", "bundled"]) await mkdir(path.join(data, dir), { recursive: true });
+    for (const dir of ["bin", "bundled"]) {
+      const f = path.join(data, dir, "ffmpeg");
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("ffmpeg", paths, { PATH: "" }))?.origin).toBe("bundled");
   });
 });

@@ -8,4 +8,5 @@ export * from "./extraction.js";
 export * from "./frame-budget.js";
 export * from "./ledger.js";
 export * from "./schema-builder.js";
+export * from "./installables.js";
 export * from "./transcript-paragraphs.js";

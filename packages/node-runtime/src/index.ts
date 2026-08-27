@@ -1,6 +1,7 @@
 export * from "./exec.js";
 export * from "./paths.js";
 export * from "./binaries.js";
+export * from "./install.js";
 export * from "./media/index.js";
 export * from "./store/artifacts.js";
 export * from "./store/db.js";

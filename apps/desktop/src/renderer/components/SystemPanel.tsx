@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronDown, Copy, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronDown, Copy, Download, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { Fix } from "@lirovo/contracts";
 import type { AsrProbe, BackendStatus, BinaryStatus } from "@lirovo/core";
 import { Mark, markFamily } from "./logos";
@@ -19,6 +19,12 @@ export interface SystemReport {
 }
 
 type Health = "ok" | "warn" | "off";
+
+/** Which rows this app can put right by itself, and what to fetch for them. */
+const FETCHABLE: Record<string, "whisper-model" | "yt-dlp"> = {
+  "yt-dlp": "yt-dlp",
+  "whisper-cpp": "whisper-model",
+};
 
 interface Item {
   readonly id: string;
@@ -69,6 +75,79 @@ const RANK: Record<Health, number> = { off: 0, warn: 1, ok: 2 };
 const worstFirst = <T extends { readonly health: Health }>(items: readonly T[]): T[] =>
   [...items].sort((a, b) => RANK[a.health] - RANK[b.health]);
 
+/**
+ * The button for a row this app can fix on its own.
+ *
+ * A verified download, with the bytes shown as they arrive: at 60MB for a
+ * speech model and 37MB for yt-dlp, a button that only greys out reads as one
+ * that did nothing. On failure the message stays on the row — a checksum that
+ * did not match is the one failure a user must not be allowed to miss.
+ */
+function InstallButton({
+  what,
+  onDone,
+}: {
+  what: "whisper-model" | "yt-dlp";
+  onDone: () => void;
+}): JSX.Element {
+  const [state, setState] = useState<"idle" | "working" | "failed">("idle");
+  const [pct, setPct] = useState<number | null>(null);
+  const [why, setWhy] = useState<string | null>(null);
+
+  useEffect(
+    () =>
+      window.lirovo.onInstallProgress((p) => {
+        if (p.what !== what || p.total === null) return;
+        setPct(Math.min(100, Math.round((p.received / p.total) * 100)));
+      }),
+    [what],
+  );
+
+  if (state === "failed") {
+    return (
+      <span className="text-danger-text shrink-0 text-xs" title={why ?? ""}>
+        {why === null ? "failed" : why.slice(0, 40)}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      disabled={state === "working"}
+      onClick={(e) => {
+        e.stopPropagation();
+        setState("working");
+        setPct(0);
+        void window.lirovo.install(what).then((answer) => {
+          if (answer.ok) {
+            setState("idle");
+            onDone();
+            return;
+          }
+          setState("failed");
+          setWhy(answer.error.message);
+        });
+      }}
+      className={cn(
+        "flex h-6 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+        state === "working" ? "bg-tint text-ink-label" : "liq-solid liq-solid-brand",
+      )}
+    >
+      {state === "working" ? (
+        <>
+          <Loader2 className="size-3 animate-spin" />
+          {pct === null ? "downloading" : `${pct}%`}
+        </>
+      ) : (
+        <>
+          <Download className="size-3" />
+          Install
+        </>
+      )}
+    </button>
+  );
+}
+
 /** Copy-to-clipboard with its own confirmation, so nothing else has to track it. */
 function CopyFix({ fix, solid }: { fix: Fix; solid?: boolean }): JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -107,12 +186,15 @@ function Row({
   item,
   selected,
   onSelect,
+  onInstalled,
 }: {
   item: Item;
   /** Set only on a row that is one of several a user picks between. */
   selected?: boolean;
   onSelect?: () => void;
+  onInstalled?: () => void;
 }): JSX.Element {
+  const fetchable = FETCHABLE[item.id];
   const choosable = onSelect !== undefined;
   const body = (
     <>
@@ -121,7 +203,12 @@ function Row({
       <span className={cn("text-ink-subtle min-w-0 flex-1 truncate text-xs", item.fix !== null && "font-mono")}>
         {item.detail}
       </span>
-      {item.fix !== null ? (
+      {/* An artifact this app can fetch and verify beats a command a person has
+          to paste: the download is checked against a published checksum, and
+          the paste is not checked at all. */}
+      {item.fix !== null && fetchable !== undefined && onInstalled !== undefined ? (
+        <InstallButton what={fetchable} onDone={onInstalled} />
+      ) : item.fix !== null ? (
         <CopyFix fix={item.fix} />
       ) : selected === true ? (
         <span className="text-ink-strong flex shrink-0 items-center gap-1 text-xs font-medium">
@@ -383,7 +470,13 @@ export function SystemPanel({
           </span>
         </button>
 
-        {blocking !== null && !open && <CopyFix fix={blocking.fix} solid />}
+        {blocking !== null &&
+          !open &&
+          (FETCHABLE[blocking.id] !== undefined ? (
+            <InstallButton what={FETCHABLE[blocking.id] as "whisper-model" | "yt-dlp"} onDone={onRecheck} />
+          ) : (
+            <CopyFix fix={blocking.fix} solid />
+          ))}
 
         <button
           onClick={onRecheck}
@@ -414,12 +507,12 @@ export function SystemPanel({
             <div className="border-hairline border-t pb-2">
               <Caption title="Media" rule="both needed" {...mediaVerdict(media)} />
               {worstFirst(media).map((item) => (
-                <Row key={item.id} item={item} />
+                <Row key={item.id} item={item} onInstalled={onRecheck} />
               ))}
 
               <Caption title="Transcription" rule="one is enough" {...transcriptionVerdict(report.asr)} />
               {worstFirst(transcription).map((item) => (
-                <Row key={item.id} item={item} />
+                <Row key={item.id} item={item} onInstalled={onRecheck} />
               ))}
 
               <Caption title="Models" rule="pick one" {...modelVerdict(models, report.defaultBackendId)} />

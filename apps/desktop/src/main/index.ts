@@ -6,6 +6,7 @@ import {
   CHANNELS,
   defaultBackendSchema,
   extractRequestSchema,
+  installSchema,
   inspectRequestSchema,
   runIdSchema,
   saveSchemaRequestSchema,
@@ -38,13 +39,21 @@ const startEngine = (): UtilityProcess => {
   child.on("message", (message: unknown) => {
     const msg = message as
       | { kind: "event"; event: unknown }
+      | { kind: "install-progress"; progress: unknown }
       | { kind: "result"; id: string; value: unknown }
       | { kind: "error"; id: string; error: { code: string; message: string } };
 
+    // Both are pushes, not answers: neither carries a request id, so neither
+    // can be looked up in `pending`.
     if (msg.kind === "event") {
       window?.webContents.send(CHANNELS.engineEvent, msg.event);
       return;
     }
+    if (msg.kind === "install-progress") {
+      window?.webContents.send(CHANNELS.installProgress, msg.progress);
+      return;
+    }
+
     const waiting = pending.get(msg.id);
     if (waiting === undefined) return;
     pending.delete(msg.id);
@@ -167,6 +176,10 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.runArtifacts,
     guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId })),
+  );
+  ipcMain.handle(
+    CHANNELS.install,
+    guard((payload) => ask({ type: "install", what: installSchema.parse(payload).what })),
   );
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
   ipcMain.handle(

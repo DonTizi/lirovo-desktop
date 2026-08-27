@@ -3,7 +3,16 @@ import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
 import type { PipelineEvent, RunStatus, SourceManifest } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, asLirovoError, makeId } from "@lirovo/contracts";
-import { DEPENDENCIES, planForBudget, runDoctor, runExtraction, runMediaPipeline } from "@lirovo/core";
+import {
+  DEFAULT_WHISPER_MODEL_ID,
+  DEPENDENCIES,
+  YT_DLP,
+  planForBudget,
+  runDoctor,
+  runExtraction,
+  runMediaPipeline,
+  whisperModelInstallable,
+} from "@lirovo/core";
 import {
   DEFAULT_VISION_BATCH,
   DEFAULT_VISION_CONCURRENCY,
@@ -17,6 +26,7 @@ import {
   createSchemaStore,
   createSettingsStore,
   createStageLedger,
+  installArtifact,
   isUrl,
   makeAsrProbe,
   makeBinaryProbe,
@@ -32,6 +42,7 @@ import {
 } from "@lirovo/node-runtime";
 import type {
   ExtractRequest,
+  InstallOutcome,
   Preferences,
   RunArtifacts,
   RunDetail,
@@ -68,11 +79,13 @@ type Inbound =
   | { id: string; type: "schemaRevisions"; schemaId: string }
   | { id: string; type: "archiveSchema"; schemaId: string }
   | { id: string; type: "runArtifacts"; runId: string }
+  | { id: string; type: "install"; what: "whisper-model" | "yt-dlp" }
   | { id: string; type: "preferences" }
   | { id: string; type: "setDefaultBackend"; backendId: string | null };
 
 type Outbound =
   | { kind: "event"; event: PipelineEvent }
+  | { kind: "install-progress"; progress: { what: string; received: number; total: number | null } }
   | { kind: "result"; id: string; value: unknown }
   | { kind: "error"; id: string; error: { code: string; message: string } };
 
@@ -311,6 +324,21 @@ const inspect = async (source: string): Promise<SourceInspection> => {
   }
 };
 
+/**
+ * Fetch one of the two dependencies with an official, checksummed artifact.
+ *
+ * The verification lives in `installArtifact`; this only names what to fetch
+ * and forwards the byte count so a 60MB model is not a frozen button.
+ */
+const install = async (what: "whisper-model" | "yt-dlp"): Promise<InstallOutcome> => {
+  const item = what === "yt-dlp" ? YT_DLP : whisperModelInstallable(DEFAULT_WHISPER_MODEL_ID);
+  if (item === null) throw asLirovoError(new Error(`nothing known as ${what}`), "INTERNAL");
+  const result = await installArtifact(item, paths, {
+    onProgress: (p) => send({ kind: "install-progress", progress: { what, received: p.received, total: p.total } }),
+  });
+  return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
+};
+
 const preferences = (): Preferences => ({
   defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend")),
 });
@@ -453,6 +481,8 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
     case "runArtifacts":
       return runArtifacts(message.runId);
+    case "install":
+      return install(message.what);
     case "preferences":
       return preferences();
     case "setDefaultBackend":

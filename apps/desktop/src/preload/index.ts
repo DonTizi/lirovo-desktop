@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/ipc.js";
 import type {
   ExtractRequest,
+  InstallOutcome,
   Preferences,
   RunArtifacts,
   RunDetail,
@@ -44,6 +45,20 @@ const api = {
   archiveSchema: (schemaId: string): Promise<Result<unknown>> =>
     ipcRenderer.invoke(CHANNELS.archiveSchema, { schemaId }),
   pickFile: (): Promise<Result<string | null>> => ipcRenderer.invoke(CHANNELS.pickFile),
+
+  /** Fetch a dependency this app can install itself. Verified before it lands. */
+  install: (what: "whisper-model" | "yt-dlp"): Promise<Result<InstallOutcome>> =>
+    ipcRenderer.invoke(CHANNELS.install, { what }),
+
+  /** Bytes as they arrive, so a 60MB model is not a frozen button. */
+  onInstallProgress: (callback: (p: { what: string; received: number; total: number | null }) => void): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void =>
+      callback(payload as { what: string; received: number; total: number | null });
+    ipcRenderer.on(CHANNELS.installProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.installProgress, listener);
+    };
+  },
 
   preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
