@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { AlertTriangle, FileVideo, Link2 } from "lucide-react";
 import type { RunSummary } from "../../main/ipc.js";
-import { PixelField } from "./PixelField";
+import { Hero } from "./hero";
 import { ColumnPicker, StationTable, useColumns } from "./station-table";
 import type { TableColumn } from "./station-table";
 import { cn } from "../lib/cn";
@@ -118,32 +118,6 @@ const COLUMNS: readonly TableColumn<RunSummary>[] = [
       ),
   },
 ];
-
-/** The page's own title, flanked by the pixel field. */
-function Hero({ title, sub }: { title: string; sub: string }): JSX.Element {
-  return (
-    <section className="relative pt-6">
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.05 }}
-        className="relative mx-auto mt-2 w-fit"
-      >
-        <PixelField side="left" />
-        <h1 className="text-ink-strong relative z-[1] text-center text-4xl font-semibold tracking-tight">{title}</h1>
-        <PixelField side="right" />
-      </motion.div>
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.12 }}
-        className="text-ink-label mt-3 text-center text-sm"
-      >
-        {sub}
-      </motion.p>
-    </section>
-  );
-}
 
 /**
  * Runs that are not moving: blocked, not waiting.

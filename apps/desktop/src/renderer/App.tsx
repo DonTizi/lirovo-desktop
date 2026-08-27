@@ -11,6 +11,7 @@ import { SourceInput } from "./components/SourceInput";
 import { RunProgress, type LiveStage } from "./components/RunProgress";
 import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
+import { Hero } from "./components/hero";
 import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
@@ -325,7 +326,7 @@ export const App = (): JSX.Element => {
                 </p>
               )}
 
-              <h1 className="text-ink-strong text-center text-4xl font-semibold tracking-tight">Lirovo</h1>
+              <Hero title="Lirovo" sub="Drop a link or a file. Every value comes back with the moment that proves it." />
 
               <div className="relative mx-auto mt-7 max-w-3xl">
                 <SourceInput
