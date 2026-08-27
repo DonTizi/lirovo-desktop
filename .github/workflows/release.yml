@@ -80,7 +80,9 @@ jobs:
       - name: collect the bundled tools
         run: pnpm --filter lirovo-desktop exec node scripts/collect-binaries.mjs --${{ matrix.arch }}
 
-      - run: pnpm --filter lirovo-desktop build
+      # Through turbo: the filter form skips the workspace packages this
+      # depends on, and the desktop typecheck then cannot resolve any of them.
+      - run: pnpm turbo run build --filter=lirovo-desktop
 
       # The tag and the version have to agree, or the release advertises one
       # number and the feed inside it carries another — and a client that

@@ -72,7 +72,12 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          pnpm --filter lirovo-desktop build
+          # Through turbo, not `pnpm --filter … build`. The filter form runs
+          # ONLY the desktop build, so @lirovo/{contracts,core,node-runtime}
+          # never emit their .d.ts and `tsc --noEmit` cannot resolve a single
+          # one of them. turbo honours `dependsOn: ["^build"]` and builds them
+          # first.
+          pnpm turbo run build --filter=lirovo-desktop
           pnpm --filter lirovo-desktop exec electron-builder --mac --arm64 --publish never
 
       # Downloadable from the run. Unsigned, so it will not launch without the
