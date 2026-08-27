@@ -7,6 +7,8 @@ import {
   defaultBackendSchema,
   extractRequestSchema,
   installSchema,
+  purgeSchema,
+  revealSchema,
   inspectRequestSchema,
   runIdSchema,
   saveSchemaRequestSchema,
@@ -181,6 +183,52 @@ app.whenReady().then(() => {
     CHANNELS.install,
     guard((payload) => ask({ type: "install", what: installSchema.parse(payload).what })),
   );
+  ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
+
+  /**
+   * A native confirmation, not a web one.
+   *
+   * This deletes files. A `confirm()` in the renderer is a dialog the page
+   * draws for itself; the one the system draws cannot be styled to look like
+   * something harmless, defaults to Cancel, and is the sheet a macOS user
+   * already knows how to read.
+   */
+  ipcMain.handle(
+    CHANNELS.purge,
+    guard(async (payload) => {
+      const { what } = purgeSchema.parse(payload);
+      const everything = what === "everything";
+      const { response } = await dialog.showMessageBox(window as BrowserWindow, {
+        type: "warning",
+        buttons: ["Cancel", everything ? "Delete everything" : "Delete extractions"],
+        defaultId: 0,
+        cancelId: 0,
+        message: everything ? "Delete everything Lirovo has stored?" : "Delete every extraction?",
+        detail: everything
+          ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
+          : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
+      });
+      if (response !== 1) return { cancelled: true, freedBytes: 0 };
+      const result = (await ask({ type: "purge", what })) as { freedBytes: number };
+      return { cancelled: false, ...result };
+    }),
+  );
+
+  ipcMain.handle(
+    CHANNELS.reveal,
+    guard(async (payload) => {
+      const { path: target } = revealSchema.parse(payload);
+      // Only inside the data directory: the renderer does not get to name an
+      // arbitrary path for the system to open.
+      const { resolvePaths } = await import("@lirovo/node-runtime");
+      const root = resolvePaths().data;
+      const resolved = path.resolve(target);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return { revealed: false };
+      shell.showItemInFolder(resolved);
+      return { revealed: true };
+    }),
+  );
+
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
   ipcMain.handle(
     CHANNELS.setDefaultBackend,

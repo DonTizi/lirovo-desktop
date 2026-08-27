@@ -38,6 +38,19 @@ export const saveSchemaRequestSchema = z.object({
 export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
 /** Null clears the choice and returns the app to picking the first available. */
+/** What a purge is allowed to remove. Named, never a free path. */
+export const purgeSchema = z.object({ what: z.enum(["runs", "everything"]) });
+export const revealSchema = z.object({ path: z.string().min(1) });
+
+export interface StorageReport {
+  readonly dataDir: string;
+  readonly runCount: number;
+  readonly runsBytes: number;
+  readonly modelsBytes: number;
+  readonly binBytes: number;
+  readonly dbBytes: number;
+}
+
 /** Which of the two fetchable dependencies to install. */
 export const installSchema = z.object({ what: z.enum(["whisper-model", "yt-dlp"]) });
 
@@ -92,6 +105,9 @@ export const CHANNELS = {
   archiveSchema: "lirovo:archive-schema",
   runArtifacts: "lirovo:run-artifacts",
   install: "lirovo:install",
+  storage: "lirovo:storage",
+  purge: "lirovo:purge",
+  reveal: "lirovo:reveal",
   installProgress: "lirovo:install-progress",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",

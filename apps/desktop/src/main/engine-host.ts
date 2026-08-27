@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
+import { join as pathJoin } from "node:path";
 import type { PipelineEvent, RunStatus, SourceManifest } from "@lirovo/contracts";
 import { ARTIFACT_PATHS, asLirovoError, makeId } from "@lirovo/contracts";
 import {
@@ -44,6 +45,7 @@ import type {
   ExtractRequest,
   InstallOutcome,
   Preferences,
+  StorageReport,
   RunArtifacts,
   RunDetail,
   RunSummary,
@@ -80,6 +82,8 @@ type Inbound =
   | { id: string; type: "archiveSchema"; schemaId: string }
   | { id: string; type: "runArtifacts"; runId: string }
   | { id: string; type: "install"; what: "whisper-model" | "yt-dlp" }
+  | { id: string; type: "storage" }
+  | { id: string; type: "purge"; what: "runs" | "everything" }
   | { id: string; type: "preferences" }
   | { id: string; type: "setDefaultBackend"; backendId: string | null };
 
@@ -339,6 +343,74 @@ const install = async (what: "whisper-model" | "yt-dlp"): Promise<InstallOutcome
   return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
 };
 
+/** Bytes under a directory, or zero when it is not there yet. */
+const sizeOf = async (dir: string): Promise<number> => {
+  const { readdir, stat } = await import("node:fs/promises");
+  let total = 0;
+  const walk = async (at: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = pathJoin(at, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else total += (await stat(full).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await walk(dir);
+  return total;
+};
+
+const storage = async (): Promise<StorageReport> => {
+  const { stat } = await import("node:fs/promises");
+  const [runsBytes, modelsBytes, binBytes] = await Promise.all([
+    sizeOf(paths.runs),
+    sizeOf(paths.models),
+    sizeOf(pathJoin(paths.data, "bin")),
+  ]);
+  return {
+    dataDir: paths.data,
+    runCount: withDb((db) => (db.prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n),
+    runsBytes,
+    modelsBytes,
+    binBytes,
+    dbBytes: (await stat(paths.dbFile).catch(() => ({ size: 0 }))).size,
+  };
+};
+
+/**
+ * Delete, for real.
+ *
+ * `runs` keeps the schemas, the settings and the downloaded model — the things
+ * that took a decision or a download to obtain — and removes the extractions
+ * and their artifacts, which is what actually fills a disk. `everything`
+ * removes the data directory outright, which is the honest meaning of
+ * uninstall for an app whose entire state lives in one folder.
+ */
+const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> => {
+  const { rm, mkdir } = await import("node:fs/promises");
+  if (what === "everything") {
+    const freed = await sizeOf(paths.data);
+    await rm(paths.data, { recursive: true, force: true });
+    await mkdir(paths.data, { recursive: true });
+    return { freedBytes: freed };
+  }
+
+  const freed = await sizeOf(paths.runs);
+  await rm(paths.runs, { recursive: true, force: true });
+  await mkdir(paths.runs, { recursive: true });
+  // The rows go with the files. A run row whose artifacts are gone is a row
+  // that opens onto a broken page.
+  withDb((db) => {
+    db.exec("DELETE FROM runs");
+    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
+  });
+  return { freedBytes: freed };
+};
+
 const preferences = (): Preferences => ({
   defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend")),
 });
@@ -483,6 +555,10 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return runArtifacts(message.runId);
     case "install":
       return install(message.what);
+    case "storage":
+      return storage();
+    case "purge":
+      return purge(message.what);
     case "preferences":
       return preferences();
     case "setDefaultBackend":

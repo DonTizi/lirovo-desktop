@@ -14,6 +14,7 @@ import { SchemaPicker } from "./components/SchemaPicker";
 import { Hero } from "./components/hero";
 import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
+import { SettingsPage } from "./components/SettingsPage";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
 import { cn } from "./lib/cn";
 
@@ -296,7 +297,7 @@ export const App = (): JSX.Element => {
     { id: "overview", label: "Overview" },
     { id: "library", label: "Library", count: runs.length },
     { id: "schemas", label: "Schemas" },
-    { id: "system", label: "System", ...(attention > 0 ? { count: attention } : {}) },
+    { id: "settings", label: "Settings", ...(attention > 0 ? { count: attention } : {}) },
   ];
   const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
     id: r.runId,
@@ -328,11 +329,15 @@ export const App = (): JSX.Element => {
             return next;
           })
         }
-        onOpenSettings={() => setTab("system")}
+        onOpenSettings={() => setTab("settings")}
         dataDir={dataDir}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* `overflow-x-clip`, not `auto`: the hero's pixel field is a viewport-wide
+          element hung outside the title so the texture bleeds to the edges of
+          the content column. Without the clip that width becomes scrollable
+          and the whole window slides sideways into empty space. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
         <div className="mx-auto max-w-6xl px-6 py-10">
           {tab === "overview" && (
             <>
@@ -456,19 +461,13 @@ export const App = (): JSX.Element => {
 
           {tab === "schemas" && <SchemasPage />}
 
-          {tab === "system" && (
-            <div className="pb-16">
-              <Hero title="System" sub="What this Mac can do, and what it is missing." />
-              <div className="mt-10">
-                <SystemPanel
-                  report={system}
-                  onRecheck={() => void check()}
-                  onChooseBackend={chooseBackend}
-                  checking={checking}
-                  expanded
-                />
-              </div>
-            </div>
+          {tab === "settings" && (
+            <SettingsPage
+              report={system}
+              onRecheck={() => void check()}
+              onChooseBackend={chooseBackend}
+              checking={checking}
+            />
           )}
 
           {tab === "library" && (

@@ -4,8 +4,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 import { createHash, randomBytes } from "node:crypto";
 import { access, constants, mkdir, rm, chmod, rename, stat, mkdtemp, readdir, readFile, copyFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir, hostname } from "node:os";
+import path, { join } from "node:path";
 import { spawn } from "node:child_process";
-import path from "node:path";
 import { createWriteStream, createReadStream, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -10646,6 +10646,58 @@ const install = async (what) => {
   });
   return { what, path: result.path, bytes: result.bytes, alreadyPresent: result.alreadyPresent };
 };
+const sizeOf = async (dir) => {
+  const { readdir: readdir2, stat: stat2 } = await import("node:fs/promises");
+  let total = 0;
+  const walk = async (at) => {
+    let entries;
+    try {
+      entries = await readdir2(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(at, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else total += (await stat2(full).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await walk(dir);
+  return total;
+};
+const storage = async () => {
+  const { stat: stat2 } = await import("node:fs/promises");
+  const [runsBytes, modelsBytes, binBytes] = await Promise.all([
+    sizeOf(paths.runs),
+    sizeOf(paths.models),
+    sizeOf(join(paths.data, "bin"))
+  ]);
+  return {
+    dataDir: paths.data,
+    runCount: withDb((db) => db.prepare("SELECT COUNT(*) AS n FROM runs").get().n),
+    runsBytes,
+    modelsBytes,
+    binBytes,
+    dbBytes: (await stat2(paths.dbFile).catch(() => ({ size: 0 }))).size
+  };
+};
+const purge = async (what) => {
+  const { rm: rm2, mkdir: mkdir2 } = await import("node:fs/promises");
+  if (what === "everything") {
+    const freed2 = await sizeOf(paths.data);
+    await rm2(paths.data, { recursive: true, force: true });
+    await mkdir2(paths.data, { recursive: true });
+    return { freedBytes: freed2 };
+  }
+  const freed = await sizeOf(paths.runs);
+  await rm2(paths.runs, { recursive: true, force: true });
+  await mkdir2(paths.runs, { recursive: true });
+  withDb((db) => {
+    db.exec("DELETE FROM runs");
+    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
+  });
+  return { freedBytes: freed };
+};
 const preferences = () => ({
   defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend"))
 });
@@ -10762,6 +10814,10 @@ const handle = async (message) => {
       return runArtifacts(message.runId);
     case "install":
       return install(message.what);
+    case "storage":
+      return storage();
+    case "purge":
+      return purge(message.what);
     case "preferences":
       return preferences();
     case "setDefaultBackend":

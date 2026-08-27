@@ -8,6 +8,7 @@ import type {
   RunDetail,
   RunSummary,
   SourceInspection,
+  StorageReport,
 } from "../main/ipc.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
@@ -59,6 +60,12 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.installProgress, listener);
     };
   },
+
+  storage: (): Promise<Result<StorageReport>> => ipcRenderer.invoke(CHANNELS.storage),
+  /** Answers `cancelled` when the user declined the system's confirmation. */
+  purge: (what: "runs" | "everything"): Promise<Result<{ cancelled: boolean; freedBytes: number }>> =>
+    ipcRenderer.invoke(CHANNELS.purge, { what }),
+  reveal: (path: string): Promise<Result<{ revealed: boolean }>> => ipcRenderer.invoke(CHANNELS.reveal, { path }),
 
   preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
