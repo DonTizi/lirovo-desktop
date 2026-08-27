@@ -7,14 +7,17 @@ import { cn } from "../../lib/cn";
 
 /** A timecode that seeks. The product's whole promise is that this works. */
 export function Cue({ t, lens, tone }: { t: number; lens: Lens; tone?: "quiet" }): JSX.Element {
+  const active = lens.t >= t && lens.t < t + 6;
   return (
     <button
       onClick={() => lens.seek(t)}
       className={cn(
-        "rounded px-1.5 py-0.5 font-mono text-xs tabular-nums transition-colors",
+        "shrink-0 rounded px-1.5 py-0.5 font-mono text-xs tabular-nums transition-colors",
         tone === "quiet"
           ? "text-ink-subtle hover:bg-tint hover:text-ink"
-          : "bg-brand-soft text-brand hover:bg-brand hover:text-ink-inverse",
+          : active
+            ? "bg-ink-strong text-ink-inverse"
+            : "bg-tint text-ink-label hover:bg-ink-strong hover:text-ink-inverse",
       )}
     >
       {formatTime(t)}
@@ -27,6 +30,67 @@ function Empty({ children }: { children: React.ReactNode }): JSX.Element {
 }
 
 /* ------------------------------------------------------------------ values */
+
+/** Letters and digits only, so punctuation and case cannot make two strings differ. */
+const bare = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Does this quote say anything the value did not?
+ *
+ * Pass B routinely writes a value that IS its evidence sentence, so printing
+ * both puts the same words on screen twice — thirty-eight times down a page,
+ * which is most of what made the list unreadable. The quote earns its line
+ * only when it carries something the value does not already contain.
+ */
+const addsSomething = (quote: string | null, value: string): boolean => {
+  if (quote === null || quote.trim() === "") return false;
+  const q = bare(quote);
+  const v = bare(value);
+  return !(q.includes(v) || v.includes(q));
+};
+
+/**
+ * One extracted value and the moments that prove it.
+ *
+ * A row rather than a table cell: the field path is a code, the value is prose
+ * of unpredictable length, and the evidence is a list. Three columns forced all
+ * three into the width of the narrowest, which is how a 38-row answer became a
+ * page of wrapped fragments.
+ */
+function ValueRowView({ row, lens }: { row: ValueRow; lens: Lens }): JSX.Element {
+  const modalities = [...new Set(row.evidence.map((e) => e.modality))];
+  const extra = row.evidence.filter((e) => addsSomething(e.quote, row.value));
+
+  return (
+    <div className="border-hairline hover:bg-elevated border-b px-4 py-3 transition-colors last:border-b-0">
+      <div className="flex items-baseline gap-2">
+        <Mono className="text-[11px]">{row.fieldPath}</Mono>
+        {modalities.map((m) => (
+          <span key={m} className="text-ink-subtle text-[10px] uppercase tracking-wide">
+            {m}
+          </span>
+        ))}
+        {row.evidence.length === 0 && <StateLabel>nothing backs this</StateLabel>}
+      </div>
+
+      <p className="text-ink-strong mt-1 text-sm leading-relaxed">{row.value.replace(/^"|"$/g, "")}</p>
+
+      {row.evidence.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {row.evidence.map((e, i) => (
+            <Cue key={`${e.sourceRef}-${i}`} t={e.tStart} lens={lens} />
+          ))}
+        </div>
+      )}
+
+      {extra.map((e, i) => (
+        <p key={`q${i}`} className="text-ink-subtle mt-1.5 text-xs italic leading-relaxed">
+          “{e.quote}”
+        </p>
+      ))}
+    </div>
+  );
+}
 
 export function ValuesTab({
   detail,
@@ -50,50 +114,13 @@ export function ValuesTab({
         }
       />
       {values.length === 0 ? (
-        <Empty>Nothing was extracted. The Progress card above says where it stopped.</Empty>
+        <Empty>Nothing was extracted. The run record says where it stopped.</Empty>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-hairline border-b">
-              <th className="text-ink-label w-[24%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                Field
-              </th>
-              <th className="text-ink-label w-[34%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                Value
-              </th>
-              <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                Proven at
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {values.map((row) => (
-              <tr key={row.observationId} className="border-hairline hover:bg-elevated border-b last:border-b-0">
-                <td className="px-4 py-2.5 align-top">
-                  <Mono>{row.fieldPath}</Mono>
-                </td>
-                <td className="text-ink-strong px-4 py-2.5 align-top">{row.value.replace(/^"|"$/g, "")}</td>
-                <td className="px-4 py-2.5 align-top">
-                  {row.evidence.length === 0 ? (
-                    <StateLabel>nothing backs this</StateLabel>
-                  ) : (
-                    <div className="flex flex-col gap-1.5">
-                      {row.evidence.map((e, i) => (
-                        <div key={`${e.sourceRef}-${i}`} className="flex items-start gap-2">
-                          <Cue t={e.tStart} lens={lens} />
-                          <span className="text-ink-subtle min-w-0 text-xs">
-                            <span className="uppercase">{e.modality}</span>
-                            {e.quote !== null && e.quote !== "" ? ` · “${e.quote}”` : ""}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div>
+          {values.map((row) => (
+            <ValueRowView key={row.observationId} row={row} lens={lens} />
+          ))}
+        </div>
       )}
     </Card>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { ChevronRight } from "lucide-react";
 import type { Stage } from "@lirovo/contracts";
 import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
 import { RunProgress, type LiveStage } from "../RunProgress";
@@ -154,9 +155,13 @@ export function RunView({
         )}
 
         {finished ? (
-          <details className="bg-base shadow-ring rounded-lg">
-            <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none px-4 py-2 text-xs transition-colors">
+          <details className="bg-base shadow-ring group/record rounded-lg">
+            <summary className="text-ink-subtle hover:text-ink flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs transition-colors">
+              <ChevronRight className="size-3.5 transition-transform group-open/record:rotate-90" />
               How this run went
+              <span className="text-ink-placeholder ml-auto tabular-nums">
+                {detail.stages.filter((a) => a.status === "done").length} stages
+              </span>
             </summary>
             <RunProgress
               status={detail.status}

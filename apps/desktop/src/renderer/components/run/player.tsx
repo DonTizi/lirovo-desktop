@@ -44,9 +44,11 @@ export function Player({
   const durationS = artifacts.durationS ?? 1;
   const kept = artifacts.frames.filter((f) => f.kept);
 
-  // Twelve evenly spaced across the video rather than the first twelve: a strip
-  // that stops a third of the way in describes a third of the video.
-  const wanted = Math.min(12, kept.length);
+  // Evenly spaced across the video rather than the first N: a strip that stops
+  // a third of the way in describes a third of the video. Six, not twelve,
+  // because the column is 40% of the window — twelve made each thumbnail 26px
+  // wide with its timecode overlapping its neighbour's.
+  const wanted = Math.min(6, kept.length);
   const strip = Array.from({ length: wanted }, (_, i) => {
     const target = ((i + 0.5) / wanted) * durationS * 1000;
     return kept.reduce((best, f) => (Math.abs(f.tMs - target) < Math.abs(best.tMs - target) ? f : best));
@@ -72,7 +74,7 @@ export function Player({
       )}
 
       {strip.length > 0 && (
-        <div className="border-hairline flex h-14 gap-px border-t">
+        <div className="border-hairline flex h-16 gap-px border-t">
           {strip.map((frame) => {
             const active = Math.abs(lens.t * 1000 - frame.tMs) < (durationS * 1000) / (strip.length * 2);
             return (
@@ -81,12 +83,20 @@ export function Player({
                 onClick={() => lens.seek(frame.tMs / 1000)}
                 aria-label={`Seek to ${formatTime(frame.tMs / 1000)}`}
                 className={cn(
-                  "relative min-w-0 flex-1 overflow-hidden transition-opacity",
-                  active ? "opacity-100" : "opacity-60 hover:opacity-90",
+                  "group/strip relative min-w-0 flex-1 overflow-hidden transition-opacity",
+                  active ? "opacity-100" : "opacity-70 hover:opacity-100",
                 )}
               >
                 <img src={frame.url} alt="" loading="lazy" decoding="async" className="size-full object-cover" />
-                <span className="absolute bottom-0.5 right-1 rounded bg-black/65 px-1 font-mono text-[10px] tabular-nums text-white">
+                {/* Shown on the current frame and on hover only: six timecodes
+                    printed permanently is a caption competing with the picture
+                    it is captioning. */}
+                <span
+                  className={cn(
+                    "absolute bottom-0.5 right-1 rounded bg-black/70 px-1 font-mono text-[10px] tabular-nums text-white transition-opacity",
+                    active ? "opacity-100" : "opacity-0 group-hover/strip:opacity-100",
+                  )}
+                >
                   {formatTime(frame.tMs / 1000)}
                 </span>
               </button>
