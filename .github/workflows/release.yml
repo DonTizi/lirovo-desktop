@@ -13,8 +13,11 @@ on:
   release:
     types: [published]
 
-# Never two at once. Two concurrent publishes into the same release race on
-# `latest-mac.yml`, and the loser's architecture disappears from the feed.
+# `concurrency` does NOT serialise the jobs of one matrix — they are children
+# of a single workflow run and share its group. Two of them publishing into the
+# same release therefore overwrite each other's `latest-mac.yml` and one
+# architecture vanishes from the feed. So the matrix builds and verifies
+# without publishing, and a single job afterwards uploads both.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -90,7 +93,7 @@ jobs:
           fi
           echo "tag $TAG matches version $VERSION"
 
-      - name: sign, notarise and publish
+      - name: sign and notarise
         env:
           # The Developer ID certificate, base64 of the .p12.
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -106,14 +109,23 @@ jobs:
           # decides, so the channel cannot drift from what the release says it
           # is.
           CHANNEL=$([ "${{ github.event.release.prerelease }}" = "true" ] && echo beta || echo latest)
-          echo "publishing to the $CHANNEL channel"
+          echo "building for the $CHANNEL channel"
           pnpm --filter lirovo-desktop exec electron-builder \
             --mac --${{ matrix.arch }} \
-            --publish always \
+            --publish never \
             -c.publish.channel="$CHANNEL"
 
-      # Proof, in the log, that what shipped is what we think shipped. Cheap,
-      # and the only place anyone will look after a Gatekeeper complaint.
+      # Signing is not optional here. Without the certificate electron-builder
+      # skips it with a warning and the build stays green, which is how an
+      # unsigned DMG reaches a release.
+      - name: the app must actually be signed
+        run: |
+          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
+          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::$APP is not signed with a Developer ID"; exit 1; }
+
+      # Proof, in the log, before anything is public. Cheap, and the only place
+      # anyone will look after a Gatekeeper complaint.
       - name: verify the signature and the notarisation
         run: |
           APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
@@ -127,3 +139,38 @@ jobs:
           done
           echo "── Gatekeeper's own verdict"
           spctl -a -vvv -t install "$APP"
+
+      # Verified, then kept for the publisher below.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+          if-no-files-found: error
+
+  # One publisher, after both architectures have been built AND verified. A
+  # failed check now means nothing was ever public, rather than one signed
+  # artifact already downloadable and the other missing.
+  publish-release:
+    name: publish
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: upload every artifact to the release that triggered this
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la dist
+          gh release upload "${{ github.event.release.tag_name }}" dist/* \
+            --repo "${{ github.repository }}" --clobber
