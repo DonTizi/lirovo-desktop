@@ -12,6 +12,10 @@ export const resolvePaths = (
   env: NodeJS.ProcessEnv = process.env,
   bundledBin: string | null = null,
 ): LirovoPaths => {
+  // `LIROVO_BUNDLED_BIN` overrides the caller, so the packaged layout can be
+  // exercised from the CLI: point it at a built .app's Resources/bin and
+  // `lirovo doctor` answers exactly as the app would, without launching one.
+  const bundled = env["LIROVO_BUNDLED_BIN"] ?? bundledBin;
   const data =
     env["LIROVO_DATA_DIR"] ??
     path.join(homedir(), "Library", "Application Support", "Lirovo");
@@ -19,7 +23,7 @@ export const resolvePaths = (
     data,
     runs: path.join(data, "runs"),
     models: path.join(data, "models"),
-    bundledBin,
+    bundledBin: bundled,
     dbFile: path.join(data, "lirovo.db"),
   };
 };

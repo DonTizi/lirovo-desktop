@@ -101,7 +101,24 @@ const send = (message: Outbound): void => {
 };
 
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
-const paths = resolvePaths();
+/**
+ * The bundled tools, when this is a packaged app.
+ *
+ * `resolveBinary` has looked in `paths.bundledBin` since it was written and
+ * has never had a value to look in. This is that value: `Contents/Resources/bin`
+ * inside the .app, which electron-builder fills from `resources/bin` and signs
+ * with the same identity as everything else in the bundle.
+ *
+ * Null in development, where the tools come from Homebrew and a stale copy
+ * under `resources/` would silently shadow the one being worked on.
+ * `resolvePaths` still honours `LIROVO_BUNDLED_BIN` over this.
+ */
+const bundledBin =
+  process.resourcesPath !== undefined && !process.resourcesPath.includes("node_modules/electron")
+    ? pathJoin(process.resourcesPath, "bin")
+    : null;
+
+const paths = resolvePaths(process.env, bundledBin);
 
 let controller: AbortController | null = null;
 

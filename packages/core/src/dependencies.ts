@@ -43,7 +43,10 @@ export const DEPENDENCIES: readonly DependencySpec[] = [
     id: "whisper-cli",
     required: false,
     why: "transcribe locally when there are no subtitles",
-    versionArgs: ["--help"],
+    // `--version` prints "whisper.cpp version: 1.9.3". `--help` prints a usage
+    // line, and the probe took its first line as the version — so the settings
+    // page displayed the binary's own path where a version belongs.
+    versionArgs: ["--version"],
     install: "brew install whisper-cpp",
   },
 ];
