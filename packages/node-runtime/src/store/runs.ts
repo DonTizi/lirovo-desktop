@@ -6,6 +6,23 @@ import type { Db } from "./db.js";
 /** How long a lease is good for before another process may take the run. */
 export const LEASE_MS = 60_000;
 
+/**
+ * A stored status plus the one the row cannot store.
+ *
+ * "stopped" is never written. It is what a `running` row means once nobody is
+ * renewing its lease — the process was killed, the machine slept, the app was
+ * quit mid-run. Writing it would destroy the thing that makes the run
+ * resumable, since `claim` takes exactly a run whose lease has expired.
+ */
+export type ObservedStatus = RunStatus | "stopped";
+
+export const observedStatus = (
+  status: RunStatus,
+  leaseExpiresAtS: number | null,
+  nowMs: number = Date.now(),
+): ObservedStatus =>
+  (status === "running" || status === "claimed") && (leaseExpiresAtS ?? 0) * 1000 < nowMs ? "stopped" : status;
+
 export interface RunStore {
   upsertSource(manifest: SourceManifest, uri: string): string;
   /**

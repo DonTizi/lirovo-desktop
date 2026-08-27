@@ -8,6 +8,7 @@ import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
 import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
+import { RunProgress, type LiveStage } from "./components/RunProgress";
 import { SchemaPicker } from "./components/SchemaPicker";
 import { SchemasPage } from "./components/SchemasPage";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
@@ -28,87 +29,63 @@ interface StageState {
  * stops believing the rest of the screen.
  */
 const useStages = (): {
-  stages: Map<Stage, StageState>;
-  reset: () => void;
+  byRun: Map<string, Map<Stage, LiveStage>>;
+  reset: (runId: string) => void;
   apply: (event: PipelineEvent) => void;
 } => {
-  const [stages, setStages] = useState<Map<Stage, StageState>>(new Map());
+  const [byRun, setByRun] = useState<Map<string, Map<Stage, LiveStage>>>(new Map());
 
-  const reset = useCallback(() => setStages(new Map()), []);
+  const reset = useCallback((runId: string) => {
+    setByRun((current) => {
+      const next = new Map(current);
+      next.delete(runId);
+      return next;
+    });
+  }, []);
 
   const apply = useCallback((event: PipelineEvent) => {
-    setStages((current) => {
+    setByRun((current) => {
       const next = new Map(current);
+      // Keyed by run, because two tabs can be open on two runs and a single
+      // map would paint one run's vision progress onto the other's row.
+      const mine = new Map(next.get(event.runId) ?? []);
+      const set = (stage: Stage, state: LiveStage): void => {
+        mine.set(stage, state);
+      };
       switch (event.type) {
         case "stage:start":
-          next.set(event.stage, { state: "active", meta: event.attempt > 1 ? `attempt ${event.attempt}` : "" });
+          set(event.stage, { state: "active", meta: event.attempt > 1 ? `attempt ${event.attempt}` : "" });
           break;
         case "stage:resumed":
-          next.set(event.stage, { state: "done", meta: "resumed" });
+          set(event.stage, { state: "done", meta: "resumed" });
           break;
         case "stage:skipped":
-          next.set(event.stage, { state: "skipped", meta: event.why });
+          set(event.stage, { state: "skipped", meta: event.why });
           break;
         case "stage:progress":
-          next.set(event.stage, {
+          set(event.stage, {
             state: "active",
             meta: `${event.done}/${event.total}${event.note === undefined ? "" : ` ${event.note}`}`,
           });
           break;
         case "stage:done":
-          next.set(event.stage, { state: "done", meta: `${(event.ms / 1000).toFixed(1)}s` });
+          set(event.stage, { state: "done", meta: `${(event.ms / 1000).toFixed(1)}s` });
           break;
         case "stage:degraded":
-          next.set(event.stage, { state: "failed", meta: event.message.slice(0, 70) });
+          set(event.stage, { state: "failed", meta: event.message });
           break;
         case "run:failed":
-          if (event.stage !== null) next.set(event.stage, { state: "failed", meta: event.code });
+          if (event.stage !== null) set(event.stage, { state: "failed", meta: event.code });
           break;
         default:
           break;
       }
+      next.set(event.runId, mine);
       return next;
     });
   }, []);
 
-  return { stages, reset, apply };
-};
-
-const StageRow = ({ stage, state }: { stage: Stage; state: StageState | undefined }): JSX.Element => {
-  const kind = state?.state ?? "waiting";
-  // A skipped stage gets its own mark. Leaving it as a pending circle reads as
-  // "still to come" and never resolves, which is the one state that makes a
-  // finished run look stuck.
-  const Icon =
-    kind === "done"
-      ? CircleCheck
-      : kind === "failed"
-        ? CircleX
-        : kind === "skipped"
-          ? CircleSlash
-          : kind === "active"
-            ? Loader2
-            : CircleDashed;
-  return (
-    <div
-      className={cn(
-        "border-hairline flex items-center gap-2.5 border-b px-4 py-2 last:border-b-0",
-        (kind === "waiting" || kind === "skipped") && "opacity-55",
-      )}
-    >
-      <Icon
-        size={15}
-        className={cn(
-          kind === "done" && "text-success",
-          kind === "failed" && "text-danger",
-          kind === "active" && "text-brand animate-spin",
-          (kind === "waiting" || kind === "skipped") && "text-ink-subtle",
-        )}
-      />
-      <span className={cn("flex-1", kind === "active" ? "text-ink-strong font-medium" : "text-ink-label")}>{stage}</span>
-      <span className="text-ink-subtle tabular-nums text-xs">{state?.meta ?? ""}</span>
-    </div>
-  );
+  return { byRun, reset, apply };
 };
 
 export const App = (): JSX.Element => {
@@ -125,20 +102,39 @@ export const App = (): JSX.Element => {
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [open, setOpen] = useState<Map<string, RunDetail>>(new Map());
+  const [openTabs, setOpen] = useState<Map<string, RunDetail>>(new Map());
   const [system, setSystem] = useState<SystemReport | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
-  const { stages, reset, apply } = useStages();
+  const { byRun, reset, apply } = useStages();
+  // The run this window is executing, so its tab can show it live.
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const video = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => window.lirovo.onEngineEvent((e) => apply(e as PipelineEvent)), [apply]);
 
   const loadRuns = useCallback(async () => {
     const answer = await window.lirovo.listRuns();
     if (answer.ok) setRuns(answer.value);
   }, []);
+
+  useEffect(
+    () =>
+      window.lirovo.onEngineEvent((e) => {
+        const event = e as PipelineEvent;
+        apply(event);
+        // The id is only knowable from the stream: `extract` does not answer
+        // until the run is over, and the progress has to be watchable before
+        // that. `run:start` is the first thing the engine sends.
+        if (event.type === "run:start") {
+          reset(event.runId);
+          setActiveRunId(event.runId);
+        }
+        if (event.type === "run:done" || event.type === "run:failed" || event.type === "run:cancelled") {
+          void loadRuns();
+        }
+      }),
+    [apply, reset, loadRuns],
+  );
 
   // Asking the engine what this machine can do is also the first proof that the
   // engine process started and that the bridge works. If either is wrong the
@@ -165,7 +161,7 @@ export const App = (): JSX.Element => {
   const start = async (): Promise<void> => {
     if (source.trim() === "") return;
     setError(null);
-    reset();
+    setActiveRunId(null);
     setRunning(true);
     setTab("overview");
 
@@ -185,6 +181,23 @@ export const App = (): JSX.Element => {
     }
     await openRun((answer.value as { runId: string }).runId);
   };
+
+  // Anything unfinished keeps refreshing. Without this a run only updates when
+  // the user clicks something, which is exactly when it looks stuck.
+  const watching = running || runs.some((r) => r.status === "running" || r.status === "claimed");
+  useEffect(() => {
+    if (!watching) return;
+    const timer = window.setInterval(() => {
+      void loadRuns();
+      const open = [...openTabs.keys()];
+      for (const runId of open) {
+        void window.lirovo.runDetail(runId).then((got) => {
+          if (got.ok && got.value !== null) setOpen((m) => new Map(m).set(runId, got.value as RunDetail));
+        });
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [watching, loadRuns, openTabs]);
 
   const openRun = async (runId: string): Promise<void> => {
     const got = await window.lirovo.runDetail(runId);
@@ -209,7 +222,7 @@ export const App = (): JSX.Element => {
     void el.play();
   };
 
-  const detail = open.get(tab) ?? null;
+  const detail = openTabs.get(tab) ?? null;
   const values = useMemo(() => {
     if (detail === null) return [];
     const needle = query.trim().toLowerCase();
@@ -239,7 +252,12 @@ export const App = (): JSX.Element => {
     .map((r) => ({
       id: r.runId,
       label: r.title ?? r.runId,
-      hint: r.status === "succeeded" ? "nothing was extracted" : `run ${r.status}`,
+      hint:
+        r.status === "succeeded"
+          ? "nothing was extracted"
+          : r.status === "stopped"
+            ? "nothing is working on this"
+            : `run ${r.status}`,
       meta: String(r.valueCount),
       icon: ShieldAlert,
     }));
@@ -257,7 +275,7 @@ export const App = (): JSX.Element => {
     { id: "library", label: "Library", count: runs.length },
     { id: "schemas", label: "Schemas" },
   ];
-  const runTabs: NavTab[] = [...open.values()].map((r) => ({
+  const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
     id: r.runId,
     label: r.title ?? r.runId,
     closable: true,
@@ -324,7 +342,7 @@ export const App = (): JSX.Element => {
                     is what makes it read as the same thing continuing rather
                     than a second thing appearing. */}
                 <AnimatePresence>
-                  {(running || stages.size > 0) && (
+                  {(running || activeRunId !== null) && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -332,14 +350,13 @@ export const App = (): JSX.Element => {
                       transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
                       className="overflow-hidden"
                     >
-                      <Card className="mt-2">
-                        <CardHeader title="Progress" action={running ? "running" : "finished"} />
-                        <div>
-                          {STAGES.map((stage) => (
-                            <StageRow key={stage} stage={stage} state={stages.get(stage)} />
-                          ))}
-                        </div>
-                      </Card>
+                      <div className="mt-2">
+                        <RunProgress
+                          status={running ? "running" : "finished"}
+                          live={byRun.get(activeRunId ?? "") ?? new Map()}
+                          attempts={[]}
+                        />
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -463,6 +480,10 @@ export const App = (): JSX.Element => {
                           <Badge tone="success">succeeded</Badge>
                         ) : r.status === "failed" ? (
                           <Badge tone="danger">failed</Badge>
+                        ) : r.status === "stopped" ? (
+                          <Badge tone="warning">stopped</Badge>
+                        ) : r.status === "running" ? (
+                          <Badge tone="info">running</Badge>
                         ) : (
                           <StateLabel>{r.status}</StateLabel>
                         )}
@@ -477,6 +498,18 @@ export const App = (): JSX.Element => {
 
           {detail !== null && (
             <>
+              {/* Above the values on purpose: when there are none, this is the
+                  only thing on the page that explains why. */}
+              <div className="mb-4">
+                <RunProgress
+                  status={detail.status}
+                  live={byRun.get(detail.runId) ?? new Map()}
+                  attempts={detail.stages}
+                  errorCode={detail.errorCode}
+                  errorMessage={detail.errorMessage}
+                />
+              </div>
+
               {detail.sourcePath !== null && !/^https?:/i.test(detail.sourcePath) && (
                 <Card className="overflow-hidden">
                   <video ref={video} controls src={`file://${detail.sourcePath}`} className="w-full bg-black" />

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
-import type { PipelineEvent, SourceManifest } from "@lirovo/contracts";
+import type { PipelineEvent, RunStatus, SourceManifest } from "@lirovo/contracts";
 import { asLirovoError, makeId } from "@lirovo/contracts";
 import { DEPENDENCIES, planForBudget, runDoctor, runExtraction, runMediaPipeline } from "@lirovo/core";
 import {
@@ -20,6 +20,7 @@ import {
   isUrl,
   makeAsrProbe,
   makeBinaryProbe,
+  observedStatus,
   openDatabase,
   persistExtraction,
   probeMedia,
@@ -84,26 +85,51 @@ const withDb = <T>(fn: (db: ReturnType<typeof openDatabase>) => T): T => {
 };
 
 const listRuns = (): RunSummary[] =>
-  withDb((db) =>
-    db
+  withDb((db) => {
+    const rows = db
       .prepare(
         `SELECT r.id AS runId, r.status, s.title, r.created_at AS createdAt,
+                r.lease_expires_at AS leaseExpiresAt,
                 (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount
            FROM runs r JOIN sources s ON s.id = r.source_id
           ORDER BY r.created_at DESC LIMIT 50`,
       )
-      .all() as unknown as RunSummary[],
-  );
+      .all() as unknown as (RunSummary & { status: RunStatus; leaseExpiresAt: number | null })[];
+    // Derived on read, never written: a row that says running an hour after its
+    // process died is the single most misleading thing this list can show.
+    return rows.map(({ leaseExpiresAt, ...row }) => ({
+      ...row,
+      status: observedStatus(row.status, leaseExpiresAt),
+    }));
+  });
 
 const runDetail = (runId: string): RunDetail | null =>
   withDb((db) => {
     const head = db
       .prepare(
-        `SELECT r.id AS runId, r.status, s.title, s.duration_s AS durationS, s.uri AS sourcePath
+        `SELECT r.id AS runId, r.status, s.title, s.duration_s AS durationS, s.uri AS sourcePath,
+                r.error_code AS errorCode, r.error_message AS errorMessage,
+                r.lease_expires_at AS leaseExpiresAt
            FROM runs r JOIN sources s ON s.id = r.source_id WHERE r.id = ?`,
       )
-      .get(runId) as Omit<RunDetail, "values" | "transcriptEngine"> | undefined;
+      .get(runId) as
+      | (Omit<RunDetail, "values" | "transcriptEngine" | "stages" | "status"> & {
+          status: RunStatus;
+          leaseExpiresAt: number | null;
+        })
+      | undefined;
     if (head === undefined) return null;
+
+    // Every attempt, not the latest: a stage that failed twice and then passed
+    // is a different story from one that passed first time, and the retry is
+    // exactly what someone troubleshooting needs to see.
+    const stages = db
+      .prepare(
+        `SELECT stage, attempt, status, error_code AS errorCode, error_message AS errorMessage,
+                started_at AS startedAt, finished_at AS finishedAt
+           FROM run_stage_attempts WHERE run_id = ? ORDER BY started_at, attempt`,
+      )
+      .all(runId) as unknown as RunDetail["stages"];
 
     const engine = db.prepare("SELECT asr_engine FROM run_manifests WHERE run_id = ?").get(runId) as
       | { asr_engine: string | null }
@@ -125,8 +151,11 @@ const runDetail = (runId: string): RunDetail | null =>
         WHERE ve.observation_id = ? ORDER BY e.t_start`,
     );
 
+    const { leaseExpiresAt, ...rest } = head;
     return {
-      ...head,
+      ...rest,
+      status: observedStatus(head.status, leaseExpiresAt),
+      stages,
       transcriptEngine: engine?.asr_engine ?? null,
       values: rows.map((row) => ({ ...row, evidence: evidence.all(row.observationId) as unknown as ValueRow["evidence"] })),
     };

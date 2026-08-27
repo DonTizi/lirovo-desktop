@@ -100,18 +100,40 @@ export interface ValueRow {
   }[];
 }
 
+/**
+ * One recorded attempt at one stage.
+ *
+ * The row the database already kept and nobody could see. It is the whole
+ * troubleshooting story: which stage, which try, how long, and the error the
+ * failure actually carried rather than the one the UI guessed.
+ */
+export interface StageAttempt {
+  readonly stage: string;
+  readonly attempt: number;
+  readonly status: string;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly startedAt: number;
+  readonly finishedAt: number | null;
+}
+
 export interface RunDetail {
   readonly runId: string;
+  /** Derived, not stored: `stopped` when nobody is renewing the lease. */
   readonly status: string;
   readonly title: string | null;
   readonly durationS: number | null;
   readonly sourcePath: string | null;
   readonly transcriptEngine: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly stages: readonly StageAttempt[];
   readonly values: readonly ValueRow[];
 }
 
 export interface RunSummary {
   readonly runId: string;
+  /** Derived, not stored: `stopped` when nobody is renewing the lease. */
   readonly status: string;
   readonly title: string | null;
   readonly createdAt: number;
