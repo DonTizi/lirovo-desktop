@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/ipc.js";
-import type { ExtractRequest, Preferences, RunDetail, RunSummary, SourceInspection } from "../main/ipc.js";
+import type {
+  ExtractRequest,
+  Preferences,
+  RunArtifacts,
+  RunDetail,
+  RunSummary,
+  SourceInspection,
+} from "../main/ipc.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 
@@ -19,6 +26,8 @@ const api = {
   doctor: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.doctor),
   listRuns: (): Promise<Result<RunSummary[]>> => ipcRenderer.invoke(CHANNELS.listRuns),
   runDetail: (runId: string): Promise<Result<RunDetail | null>> => ipcRenderer.invoke(CHANNELS.runDetail, { runId }),
+  runArtifacts: (runId: string): Promise<Result<RunArtifacts>> =>
+    ipcRenderer.invoke(CHANNELS.runArtifacts, { runId }),
   extract: (request: ExtractRequest): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.extract, request),
   cancel: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.cancel),
   inspect: (source: string): Promise<Result<SourceInspection>> => ipcRenderer.invoke(CHANNELS.inspect, { source }),

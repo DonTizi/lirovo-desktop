@@ -5,7 +5,7 @@ import type {
   PipelineEventListener,
   TranscriptSegment,
 } from "@lirovo/contracts";
-import { LirovoError, asLirovoError } from "@lirovo/contracts";
+import { ARTIFACT_PATHS, LirovoError, asLirovoError } from "@lirovo/contracts";
 import type { Kg } from "./kg.js";
 import type { MediaPipelineDeps, MediaPipelineInput, MediaPipelineResult } from "./media-pipeline.js";
 import { runMediaPipeline } from "./media-pipeline.js";
@@ -139,6 +139,17 @@ export const runExtraction = async (
       );
       analyses = described.analyses;
       visionSessions = described.sessions;
+      // Written here rather than by whichever surface called us. What a frame
+      // was seen to contain is the evidence behind half the graph, and until
+      // now it lived only in memory: the run directory could never explain
+      // why a visual claim was made.
+      if (described.analyses.length > 0) {
+        await deps.store.put(
+          input.runId,
+          ARTIFACT_PATHS.vision,
+          `${JSON.stringify({ run_id: input.runId, analyses: described.analyses }, null, 2)}\n`,
+        );
+      }
       framesSkippedForBudget = described.framesSkippedForBudget;
       if (described.framesSkippedForBudget > 0) {
         // Loud, never silent: a user who does not know frames were left out
@@ -202,6 +213,10 @@ export const runExtraction = async (
   const extracted = await stage("reason", { schema: input.dataSchema }, () =>
     deps.inference.extract({ kg: graph.kg, dataSchema: input.dataSchema, signal: input.signal }),
   );
+
+  // Same reason, and the same place: the CLI used to write this and the
+  // desktop did not, so a run made in the app had no graph on disk at all.
+  await deps.store.put(input.runId, ARTIFACT_PATHS.graph, `${JSON.stringify(graph.kg, null, 2)}\n`);
 
   emit({ type: "run:done", runId: input.runId, ms: deps.now() });
 

@@ -12,7 +12,13 @@ import {
   schemaIdSchema,
 } from "./ipc.js";
 
+import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Before `whenReady`, which is the only moment a privileged scheme may be
+// declared. Everything else about the protocol is set up after.
+registerMediaScheme();
 const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
 
 let window: BrowserWindow | null = null;
@@ -125,6 +131,7 @@ const guard =
   };
 
 app.whenReady().then(() => {
+  installMediaProtocol();
   ipcMain.handle(CHANNELS.doctor, guard(() => ask({ type: "doctor" })));
   ipcMain.handle(CHANNELS.listRuns, guard(() => ask({ type: "listRuns" })));
 
@@ -157,6 +164,10 @@ app.whenReady().then(() => {
     guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
   );
 
+  ipcMain.handle(
+    CHANNELS.runArtifacts,
+    guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId })),
+  );
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
   ipcMain.handle(
     CHANNELS.setDefaultBackend,

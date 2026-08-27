@@ -80,6 +80,7 @@ export const CHANNELS = {
   saveSchema: "lirovo:save-schema",
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
+  runArtifacts: "lirovo:run-artifacts",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event",
@@ -129,6 +130,51 @@ export interface RunDetail {
   readonly errorMessage: string | null;
   readonly stages: readonly StageAttempt[];
   readonly values: readonly ValueRow[];
+}
+
+/**
+ * Everything a finished run left on disk, addressed for the renderer.
+ *
+ * Separate from RunDetail because it is bigger, read from files rather than
+ * rows, and only wanted once a run is opened — a list of fifty runs must not
+ * pay to parse fifty knowledge graphs.
+ */
+export interface RunArtifacts {
+  /** `lirovo-media://` for the normalized stream; null when normalize never ran. */
+  readonly videoUrl: string | null;
+  readonly durationS: number | null;
+  readonly transcript: {
+    readonly engine: string | null;
+    readonly model: string | null;
+    /** The transcript's own measure of the audio, when the manifest has none. */
+    readonly durationS: number | null;
+    readonly text: string;
+    readonly segments: readonly {
+      readonly id: string;
+      readonly speaker: string | null;
+      readonly tStart: number;
+      readonly tEnd: number;
+      readonly text: string;
+    }[];
+  } | null;
+  readonly frames: readonly {
+    readonly idx: number;
+    readonly tMs: number;
+    readonly kept: boolean;
+    readonly url: string;
+  }[];
+  readonly analyses: readonly {
+    readonly frameIdx: number;
+    readonly tMs: number;
+    readonly sceneType: string;
+    readonly describes: string;
+    readonly ocrText: string | null;
+    readonly salientObjects: readonly string[];
+  }[];
+  readonly graph: {
+    readonly nodes: readonly Record<string, unknown>[];
+    readonly edges: readonly Record<string, unknown>[];
+  } | null;
 }
 
 export interface RunSummary {

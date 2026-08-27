@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
 import type { PipelineEvent, RunStatus, SourceManifest } from "@lirovo/contracts";
-import { asLirovoError, makeId } from "@lirovo/contracts";
+import { ARTIFACT_PATHS, asLirovoError, makeId } from "@lirovo/contracts";
 import { DEPENDENCIES, planForBudget, runDoctor, runExtraction, runMediaPipeline } from "@lirovo/core";
 import {
   DEFAULT_VISION_BATCH,
@@ -30,7 +30,16 @@ import {
   selectBackend,
   sourceTypeOf,
 } from "@lirovo/node-runtime";
-import type { ExtractRequest, Preferences, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
+import type {
+  ExtractRequest,
+  Preferences,
+  RunArtifacts,
+  RunDetail,
+  RunSummary,
+  SourceInspection,
+  ValueRow,
+} from "./ipc.js";
+import { mediaUrl } from "./media-protocol.js";
 import type { z } from "zod";
 import type { saveSchemaRequestSchema } from "./ipc.js";
 
@@ -58,6 +67,7 @@ type Inbound =
   | { id: string; type: "saveSchema"; input: SaveSchemaRequest }
   | { id: string; type: "schemaRevisions"; schemaId: string }
   | { id: string; type: "archiveSchema"; schemaId: string }
+  | { id: string; type: "runArtifacts"; runId: string }
   | { id: string; type: "preferences" }
   | { id: string; type: "setDefaultBackend"; backendId: string | null };
 
@@ -160,6 +170,64 @@ const runDetail = (runId: string): RunDetail | null =>
       values: rows.map((row) => ({ ...row, evidence: evidence.all(row.observationId) as unknown as ValueRow["evidence"] })),
     };
   });
+
+/**
+ * Everything the run wrote, read back for the review surface.
+ *
+ * Each artifact is optional on purpose. A run that failed at scene-detect still
+ * has a transcript worth reading, and a run with no model backend still has
+ * frames worth looking at — so a missing file is an absent section, never an
+ * error that hides the parts that did survive.
+ */
+const runArtifacts = async (runId: string): Promise<RunArtifacts> => {
+  const store = createFsArtifactStore(paths.runs);
+  const readJson = async <T>(key: string): Promise<T | null> => {
+    const text = await store.getText(runId, key);
+    if (text === null) return null;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A half-written artifact is missing, not fatal: the run may have been
+      // killed mid-write and every other section still reads.
+      return null;
+    }
+  };
+
+  const [manifest, transcript, framesManifest, vision, graph] = await Promise.all([
+    readJson<{ duration_s?: number }>(ARTIFACT_PATHS.sourceManifest),
+    readJson<RunArtifacts["transcript"]>(ARTIFACT_PATHS.transcript),
+    readJson<{ dedup?: { idx: number; t_ms: number; kept: boolean }[]; raw?: { idx: number; t_ms: number }[] }>(
+      ARTIFACT_PATHS.framesManifest,
+    ),
+    readJson<{ analyses?: RunArtifacts["analyses"] }>(ARTIFACT_PATHS.vision),
+    readJson<{ nodes?: Record<string, unknown>[]; edges?: Record<string, unknown>[] }>(ARTIFACT_PATHS.graph),
+  ]);
+
+  const videoPath = store.resolve(runId, ARTIFACT_PATHS.video);
+  const hasVideo = await store.exists(runId, ARTIFACT_PATHS.video);
+
+  // Dedup is the list worth showing — the kept frames are the ones the model
+  // was actually given — but a run that failed before dedup only has raw.
+  const dedup = framesManifest?.dedup ?? [];
+  const source = dedup.length > 0 ? dedup : (framesManifest?.raw ?? []).map((f) => ({ ...f, kept: true }));
+  const frames = source.map((frame) => ({
+    idx: frame.idx,
+    tMs: frame.t_ms,
+    kept: frame.kept !== false,
+    url: mediaUrl(
+      store.resolve(runId, dedup.length > 0 ? ARTIFACT_PATHS.dedupFrame(frame.idx) : ARTIFACT_PATHS.rawFrame(frame.idx)),
+    ),
+  }));
+
+  return {
+    videoUrl: hasVideo ? mediaUrl(videoPath) : null,
+    durationS: manifest?.duration_s ?? transcript?.durationS ?? null,
+    transcript,
+    frames,
+    analyses: vision?.analyses ?? [],
+    graph: graph === null ? null : { nodes: graph.nodes ?? [], edges: graph.edges ?? [] },
+  };
+};
 
 /**
  * Recognise a source without downloading or transcoding it.
@@ -366,6 +434,8 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return withDb((db) => createSchemaStore(db).save(message.input));
     case "schemaRevisions":
       return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
+    case "runArtifacts":
+      return runArtifacts(message.runId);
     case "preferences":
       return preferences();
     case "setDefaultBackend":

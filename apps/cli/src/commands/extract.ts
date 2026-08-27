@@ -272,7 +272,6 @@ export const extractCommand = async (
         data: result.data,
         evidenceByField: result.evidenceByField,
       });
-      await store.put(runId, ARTIFACT_PATHS.graph, `${JSON.stringify(result.kg, null, 2)}\n`);
       persistManifest(db, {
         runId,
         sourceSha256: result.manifest.content_sha256,

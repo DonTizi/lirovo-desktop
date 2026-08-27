@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
@@ -9,6 +9,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
 import { RunProgress, type LiveStage } from "./components/RunProgress";
+import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
 import { SchemasPage } from "./components/SchemasPage";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
@@ -110,7 +111,6 @@ export const App = (): JSX.Element => {
   const { byRun, reset, apply } = useStages();
   // The run this window is executing, so its tab can show it live.
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const video = useRef<HTMLVideoElement>(null);
 
   const loadRuns = useCallback(async () => {
     const answer = await window.lirovo.listRuns();
@@ -213,13 +213,6 @@ export const App = (): JSX.Element => {
     const file = event.dataTransfer.files[0];
     // A dropped File carries no path; only the preload can recover the real one.
     if (file !== undefined) setSource(window.lirovo.pathForFile(file));
-  };
-
-  const seek = (t: number): void => {
-    const el = video.current;
-    if (el === null) return;
-    el.currentTime = t;
-    void el.play();
   };
 
   const detail = openTabs.get(tab) ?? null;
@@ -497,83 +490,7 @@ export const App = (): JSX.Element => {
           )}
 
           {detail !== null && (
-            <>
-              {/* Above the values on purpose: when there are none, this is the
-                  only thing on the page that explains why. */}
-              <div className="mb-4">
-                <RunProgress
-                  status={detail.status}
-                  live={byRun.get(detail.runId) ?? new Map()}
-                  attempts={detail.stages}
-                  errorCode={detail.errorCode}
-                  errorMessage={detail.errorMessage}
-                />
-              </div>
-
-              {detail.sourcePath !== null && !/^https?:/i.test(detail.sourcePath) && (
-                <Card className="overflow-hidden">
-                  <video ref={video} controls src={`file://${detail.sourcePath}`} className="w-full bg-black" />
-                </Card>
-              )}
-
-              <Card>
-                <CardHeader
-                  title={detail.title ?? "Result"}
-                  action={
-                    <span>
-                      {grounded} of {values.length} grounded
-                      {detail.transcriptEngine !== null ? ` · ${detail.transcriptEngine}` : ""}
-                    </span>
-                  }
-                />
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-hairline border-b">
-                      <th className="text-ink-label w-[26%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Field
-                      </th>
-                      <th className="text-ink-label w-[34%] px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Value
-                      </th>
-                      <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                        Proven at
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {values.map((row: ValueRow) => (
-                      <tr key={row.observationId} className="border-hairline hover:bg-elevated border-b last:border-b-0">
-                        <td className="px-4 py-2.5 align-top">
-                          <Mono>{row.fieldPath}</Mono>
-                        </td>
-                        <td className="text-ink-strong px-4 py-2.5 align-top">{row.value.replace(/^"|"$/g, "")}</td>
-                        <td className="px-4 py-2.5 align-top">
-                          {row.evidence.length === 0 ? (
-                            <StateLabel>nothing backs this</StateLabel>
-                          ) : (
-                            row.evidence.map((e, i) => (
-                              <button
-                                key={`${row.observationId}-${i}`}
-                                className={cn(
-                                  "mb-1 mr-1.5 inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono text-xs transition-colors",
-                                  e.modality === "visual"
-                                    ? "bg-warning-tint text-warning-text hover:brightness-95"
-                                    : "bg-info-tint text-info-text hover:brightness-95",
-                                )}
-                                title={e.quote ?? e.sourceRef}
-                                onClick={() => seek(e.tStart)}
-                              >
-                                {clock(e.tStart)}
-                              </button>
-                            ))
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </Card>
-            </>
+            <RunView detail={detail} values={values} live={byRun.get(detail.runId) ?? new Map()} />
           )}
         </div>
       </div>
