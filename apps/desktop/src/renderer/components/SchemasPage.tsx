@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, Check, Clock, Plus } from "lucide-react";
+import { Archive, Check, Clock, Pencil, Plus, RotateCcw } from "lucide-react";
 import { SCHEMA_PRESETS, type FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 import { Badge, Card, CardHeader, StateLabel } from "./primitives";
@@ -42,6 +42,11 @@ export function SchemasPage(): JSX.Element {
   const [saved, setSaved] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
+  // What the next save produces, when it produces anything: an edit that ends
+  // up identical to a revision already on file republishes that one instead of
+  // adding a copy, which is why this is the ceiling and not a promise.
+  const nextVersion = history.reduce((max, r) => Math.max(max, r.version), 0) + 1;
+
   const reload = useCallback(async () => {
     const answer = await window.lirovo.listSchemas();
     if (answer.ok) setSchemas(answer.value);
@@ -80,6 +85,39 @@ export function SchemasPage(): JSX.Element {
     setSaved(`Saved as version ${answer.value.version}`);
     setReading(answer.value);
     setEditing(false);
+    const refreshed = await window.lirovo.schemaRevisions(answer.value.schemaId);
+    if (refreshed.ok) setHistory(refreshed.value);
+    void reload();
+  };
+
+  /**
+   * Edit what is on screen, not what happens to be published.
+   *
+   * The rail can be showing v1 while v3 is in force. Seeding the editor from
+   * the published revision in that state would silently discard the version
+   * the user was reading and edit a different one — so the draft is refilled
+   * from whichever revision is open.
+   */
+  const edit = (): void => {
+    if (draft === null) return;
+    setDraft({ ...draft, fields: [...(reading?.fields ?? draft.fields)] });
+    setEditing(true);
+    setSaved(null);
+  };
+
+  /** Publishing an old revision again. The store republishes it rather than
+   *  writing a copy, so the history does not grow a duplicate. */
+  const restore = async (): Promise<void> => {
+    if (draft === null || reading === null) return;
+    const answer = await window.lirovo.saveSchema({
+      ...(draft.schemaId !== undefined ? { schemaId: draft.schemaId } : {}),
+      name: draft.name.trim(),
+      description: draft.description.trim(),
+      fields: reading.fields,
+    });
+    if (!answer.ok) return;
+    setSaved(`v${answer.value.version} is in force`);
+    setReading(answer.value);
     const refreshed = await window.lirovo.schemaRevisions(answer.value.schemaId);
     if (refreshed.ok) setHistory(refreshed.value);
     void reload();
@@ -191,16 +229,7 @@ export function SchemasPage(): JSX.Element {
                     ? "New schema"
                     : `${draft.name}${reading === null ? "" : ` · v${reading.version}`}`
                 }
-                action={
-                  <div className="flex items-center gap-3">
-                    {saved !== null && <span className="text-success-text">{saved}</span>}
-                    {draft.schemaId !== undefined && !editing && (
-                      <button onClick={() => setEditing(true)} className="text-ink-label hover:text-ink-strong">
-                        Edit
-                      </button>
-                    )}
-                  </div>
-                }
+                action={saved !== null ? <span className="text-success-text">{saved}</span> : undefined}
               />
               <dl className="grid gap-x-8 gap-y-2 px-5 py-4 text-sm sm:grid-cols-2">
                 <div className="flex items-baseline justify-between gap-4">
@@ -224,12 +253,33 @@ export function SchemasPage(): JSX.Element {
                   </dd>
                 </div>
               </dl>
+
+              {draft.schemaId !== undefined && !editing && (
+                <div className="border-hairline flex items-center gap-2 border-t px-5 py-3">
+                  <button onClick={edit} className="liq-solid liq-solid-brand flex h-9 items-center gap-1.5 rounded-lg px-4 text-sm font-medium">
+                    <Pencil className="size-3.5" />
+                    Edit fields
+                  </button>
+                  {reading !== null && !reading.published && (
+                    <button
+                      onClick={() => void restore()}
+                      className="shadow-control bg-base hover:bg-elevated flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium"
+                    >
+                      <RotateCcw className="size-3.5" />
+                      Put v{reading.version} back in force
+                    </button>
+                  )}
+                  <span className="text-ink-subtle ml-auto text-xs">
+                    Editing writes v{nextVersion}. Nothing already extracted changes.
+                  </span>
+                </div>
+              )}
             </Card>
 
             {editing || draft.schemaId === undefined ? (
               <Card>
                 <CardHeader
-                  title={draft.schemaId === undefined ? "Build it" : "Edit"}
+                  title={draft.schemaId === undefined ? "Build it" : `Editing — saves as v${nextVersion}`}
                   action="a change to a name, a type or a definition writes a new version"
                 />
                 <div className="grid gap-2 p-4">
