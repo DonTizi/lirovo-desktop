@@ -124,6 +124,16 @@ const paths = resolvePaths(process.env, bundledBin);
 
 let controller: AbortController | null = null;
 
+/**
+ * Is an extraction in flight in this process?
+ *
+ * `controller` is set for exactly as long as one is running, so it is already
+ * the answer — it just needed asking. Purge deletes the run directory that a
+ * live extraction is writing frames into, which leaves artifacts orphaned from
+ * their rows in one direction and rows pointing at deleted files in the other.
+ */
+const extracting = (): boolean => controller !== null;
+
 const withDb = <T>(fn: (db: ReturnType<typeof openDatabase>) => T): T => {
   const db = openDatabase(paths.dbFile);
   try {
@@ -391,8 +401,15 @@ const storage = async (): Promise<StorageReport> => withDb((db) => storageReport
  * and a real database, which is not something a module that talks to
  * `process.parentPort` can be.
  */
-const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> =>
-  what === "everything" ? purgeEverything(paths) : withDb((db) => purgeRuns(paths, db));
+const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> => {
+  if (extracting()) {
+    throw asLirovoError(
+      new Error("an extraction is running — it writes into the directory this would delete"),
+      "STORE_BUSY",
+    );
+  }
+  return what === "everything" ? purgeEverything(paths) : withDb((db) => purgeRuns(paths, db));
+};
 
 const preferences = (): Preferences =>
   withDb((db) => {
@@ -432,6 +449,13 @@ const doctor = async (): Promise<unknown> => {
 };
 
 const extract = async (request: ExtractRequest): Promise<unknown> => {
+  // One at a time. Two runs in this process share `controller`, so the second
+  // would silently take the first's cancellation and the first would become
+  // uncancellable.
+  if (extracting()) {
+    throw asLirovoError(new Error("an extraction is already running"), "STORE_BUSY");
+  }
+
   await mkdir(paths.runs, { recursive: true });
   const store = createFsArtifactStore(paths.runs);
   const db = openDatabase(paths.dbFile);

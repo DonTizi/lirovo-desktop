@@ -1,7 +1,6 @@
-import { createReadStream, statSync } from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { protocol } from "electron";
+import { pathToFileURL } from "node:url";
+import { net, protocol } from "electron";
 import { resolvePaths } from "@lirovo/node-runtime";
 import { MEDIA_SCHEME, pathFromMediaUrl } from "./media-url.js";
 
@@ -48,8 +47,22 @@ const withinRoot = (candidate: string, root: string): boolean => {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 };
 
-export const handleMediaRequest = (url: string, roots: readonly string[]): Response => {
-  const file = pathFromMediaUrl(url);
+/**
+ * Serve the file, and let Chromium do the ranges.
+ *
+ * The hand-rolled version advertised `accept-ranges: bytes` and then ignored
+ * the `Range` header, answering every request with the whole file and a 200.
+ * A player asked to seek to 18:36 of an 80MB video therefore refetched from
+ * byte zero — which is the one interaction this whole app exists to make
+ * work, since every extracted value is a timecode you click.
+ *
+ * `net.fetch` on a `file://` URL implements 206, `Content-Range` and 416
+ * correctly because it is the same code path Chromium uses for any file, and
+ * it is code we then do not own. The containment check stays ours: it runs
+ * before the fetch, and nothing outside the run directory is ever named.
+ */
+export const handleMediaRequest = async (request: Request, roots: readonly string[]): Promise<Response> => {
+  const file = pathFromMediaUrl(request.url);
 
   if (!roots.some((root) => withinRoot(file, root))) {
     // Logged rather than silent: a refused request renders as a black player,
@@ -58,22 +71,28 @@ export const handleMediaRequest = (url: string, roots: readonly string[]): Respo
     return new Response("forbidden", { status: 403 });
   }
 
-  try {
-    const size = statSync(file).size;
-    return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, {
-      status: 200,
-      headers: {
-        "content-length": String(size),
-        "content-type": contentType(file),
-        // Seeking works without this in Chromium's stream mode, but saying so
-        // is what stops it from downloading the whole file to scrub.
-        "accept-ranges": "bytes",
-      },
-    });
-  } catch {
+  // `bypassCustomProtocolHandlers` so this cannot recurse into itself.
+  const answer = await net
+    .fetch(pathToFileURL(file).toString(), {
+      headers: request.headers,
+      bypassCustomProtocolHandlers: true,
+    })
+    .catch(() => null);
+
+  if (answer === null || answer.status === 404) {
     process.stderr.write(`[media] missing ${file}\n`);
     return new Response("not found", { status: 404 });
   }
+
+  // Chromium guesses a type from the extension and gets video containers
+  // wrong often enough to matter; a `.mp4` served as octet-stream will not
+  // play. Ours wins where we have one.
+  const known = TYPES[path.extname(file).toLowerCase()];
+  if (known === undefined) return answer;
+
+  const headers = new Headers(answer.headers);
+  headers.set("content-type", known);
+  return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
 };
 
 const TYPES: Record<string, string> = {
@@ -90,9 +109,7 @@ const TYPES: Record<string, string> = {
   ".m4a": "audio/mp4",
 };
 
-const contentType = (file: string): string => TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
-
 export const installMediaProtocol = (): void => {
   const roots = [resolvePaths().runs];
-  protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request.url, roots));
+  protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, roots));
 };

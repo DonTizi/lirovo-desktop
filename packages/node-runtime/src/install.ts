@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat, chmod } from "node:fs/promises";
 import path from "node:path";
@@ -46,7 +46,11 @@ export const installArtifact = async (
 ): Promise<InstallResult> => {
   const doFetch = options.fetch ?? globalThis.fetch;
   const dest = path.join(paths.data, item.relPath);
-  const partial = `${dest}.part`;
+  // Unique per call. A single `${dest}.part` meant two concurrent installs of
+  // the same artifact wrote into one file and each deleted the other's work
+  // while hashing a different stream — and whichever renamed last published
+  // bytes nobody had verified as a whole.
+  const partial = `${dest}.part-${randomBytes(6).toString("hex")}`;
 
   const expected = typeof item.sha256 === "string" ? item.sha256 : await resolveSum(item, doFetch);
 

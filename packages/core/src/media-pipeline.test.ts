@@ -258,4 +258,62 @@ describe("nothing is left running when the pipeline returns", () => {
 
     expect(sceneFinished).toBe(true);
   });
+
+  it("tells the sibling to stop instead of waiting out its timeout", async () => {
+    // Waiting is what keeps a stage from writing to a closed database. Waiting
+    // FOREVER is a different thing: transcription can fail in a second while
+    // scene-detect still has forty-five minutes of timeout ahead of it, and
+    // the user would sit through all of it to hear about a failure that had
+    // already happened.
+    let sawAbort = false;
+    const ledger = memoryLedger();
+
+    await expect(
+      runMediaPipeline(
+        { runId: "run_1", source: "/tmp/talk.mp4", frameCap: 100, signal: new AbortController().signal },
+        {
+          stages: {
+            ingest: async () => ({
+              manifest: {
+                source_type: "file" as const,
+                duration_s: 10,
+                codec: "h264",
+                has_audio: true,
+                has_video: true,
+                ext: "mp4",
+                title: "talk",
+                source_path: "/tmp/talk.mp4",
+                content_sha256: "abc",
+              },
+              mediaPath: "/tmp/talk.mp4",
+            }),
+            normalize: async () => ({ audio_path: "/a.flac", video_path: "/v.mp4", duration_s: 10 }),
+            sceneDetect: async (input) =>
+              new Promise((resolve, reject) => {
+                // Stands in for ffmpeg's long timeout: only cancellation ends
+                // this, so a test that passes proves cancellation happened.
+                input.signal.addEventListener("abort", () => {
+                  sawAbort = true;
+                  reject(new Error("cancelled"));
+                });
+              }),
+            dedup: async () => ({ keptCount: 0, droppedCount: 0, params: { phash_hamming: 5 } }),
+          },
+          asr: {
+            name: "fake",
+            isAvailable: async () => true,
+            transcribe: async () => {
+              throw new Error("no transcription strategy succeeded");
+            },
+          },
+          store,
+          now: () => 0,
+          sha256: (s) => `sha(${s})`,
+          ledger,
+        },
+      ),
+    ).rejects.toThrow(/transcription/);
+
+    expect(sawAbort).toBe(true);
+  });
 });
