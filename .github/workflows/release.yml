@@ -166,15 +166,45 @@ jobs:
     permissions:
       contents: write
     steps:
+      # NOT `merge-multiple: true`. Each architecture wrote a complete
+      # `latest-mac.yml` naming only its own two files, under the same name;
+      # merging the directories would let one silently overwrite the other and
+      # take that architecture out of the update feed.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: dist
-          merge-multiple: true
+        with: { name: dist-arm64, path: dist/arm64 }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: dist-x64, path: dist/x64 }
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22 }
+      - run: pnpm install --frozen-lockfile
+
+      # One feed listing all four files. electron-builder does this itself
+      # when it builds both architectures in one invocation; two runners
+      # cannot, because neither knows the other exists.
+      - name: merge the per-architecture update feeds
+        run: |
+          mkdir -p dist/merged
+          node apps/desktop/scripts/merge-update-feeds.mjs dist/merged dist/arm64 dist/x64
+
+      - name: the feed must name both architectures
+        run: |
+          FEED=$(ls dist/merged/*-mac.yml)
+          echo "── $FEED"; cat "$FEED"
+          grep -E "^ *- url:" "$FEED" | grep -q  "arm64" \
+            || { echo "::error::no arm64 build in the update feed"; exit 1; }
+          grep -E "^ *- url:" "$FEED" | grep -qv "arm64" \
+            || { echo "::error::no x64 build in the update feed"; exit 1; }
 
       - name: upload every artifact to the release that triggered this
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ls -la dist
-          gh release upload "${{ github.event.release.tag_name }}" dist/* \
+          # The merged feed last, so it is never overwritten by a per-arch one.
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/arm64/*.dmg dist/arm64/*.zip dist/arm64/*.blockmap \
+            dist/x64/*.dmg dist/x64/*.zip dist/x64/*.blockmap \
+            --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" dist/merged/*-mac.yml \
             --repo "${{ github.repository }}" --clobber
