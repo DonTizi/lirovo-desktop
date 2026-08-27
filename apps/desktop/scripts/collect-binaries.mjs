@@ -69,12 +69,29 @@ const sha256 = async (file) => {
   return hash.digest("hex");
 };
 
+/**
+ * Is the right thing already here?
+ *
+ * "Right" includes the architecture. Testing only for existence meant a switch
+ * from --x64 to --arm64 reported "already here" over the leftover x86_64
+ * binaries and bundled them — the afterPack guard caught it at package time,
+ * but a collector that hands back the wrong file is the bug, and the guard is
+ * the net.
+ */
 const present = async (name) => {
+  const file = path.join(OUT, name);
   try {
-    return (await stat(path.join(OUT, name))).size > 0;
+    if ((await stat(file)).size === 0) return false;
   } catch {
     return false;
   }
+  const wanted = arch === "arm64" ? "arm64" : "x86_64";
+  const { stdout } = await run("file", [file]);
+  if (stdout.includes(wanted)) return true;
+  // Wrong architecture: remove it so the fetch below has somewhere to land.
+  say(`  ${name.padEnd(12)} present but not ${wanted} — replacing`);
+  await rm(file, { force: true });
+  return false;
 };
 
 /* --------------------------------------------------------------- ffmpeg */

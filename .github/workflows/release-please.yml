@@ -1,0 +1,29 @@
+# Production versions, from the commit messages that are already being written.
+#
+# release-please keeps one open PR that accumulates every conventional commit
+# on main into a changelog and a version bump. Merging that PR is the single
+# manual gesture that means "ship this" — and it creates a normal GitHub
+# release, which is what `release.yml` reacts to, which is what lands on the
+# `latest` channel.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # A PAT, not GITHUB_TOKEN. A release created by GITHUB_TOKEN does not
+          # trigger another workflow, so `release.yml` would never fire and the
+          # release would sit there with no binaries attached.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

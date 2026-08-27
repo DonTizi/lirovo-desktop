@@ -15,6 +15,7 @@ import { Hero } from "./components/hero";
 import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { UpdateToast } from "./components/UpdateToast";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
 import { cn } from "./lib/cn";
 
@@ -337,6 +338,8 @@ export const App = (): JSX.Element => {
           element hung outside the title so the texture bleeds to the edges of
           the content column. Without the clip that width becomes scrollable
           and the whole window slides sideways into empty space. */}
+      <UpdateToast />
+
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
         <div className="mx-auto max-w-6xl px-6 py-10">
           {tab === "overview" && (

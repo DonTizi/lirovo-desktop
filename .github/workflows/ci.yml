@@ -1,0 +1,75 @@
+# Every pull request, and every push to main.
+#
+# No secrets are used anywhere in this file, on purpose: it has to run on a
+# fork's pull request, and a workflow that needs a signing certificate to tell
+# you whether the code compiles is a workflow that tells contributors nothing.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # One run per branch. Pushing three times in a minute should not hold three
+  # macOS runners.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck · test · build
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # One turbo invocation: it knows the dependency order between the
+      # packages and will not run a package's tests before its deps are built.
+      - run: pnpm turbo run typecheck test build
+
+  package:
+    name: unsigned build
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # arm64 only here. Both architectures on every PR is forty minutes of
+      # runner to prove something the release build proves again anyway; this
+      # exists to catch a packaging change that breaks the build, and one arch
+      # catches that.
+      - name: collect the bundled tools
+        run: pnpm --filter lirovo-desktop exec node scripts/collect-binaries.mjs --arm64
+
+      - name: build an unsigned app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          pnpm --filter lirovo-desktop build
+          pnpm --filter lirovo-desktop exec electron-builder --mac --arm64 --publish never
+
+      # Downloadable from the run. Unsigned, so it will not launch without the
+      # user overriding Gatekeeper — which is the honest state of a PR build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lirovo-arm64-unsigned
+          path: apps/desktop/release/*.dmg
+          retention-days: 7
+          if-no-files-found: error

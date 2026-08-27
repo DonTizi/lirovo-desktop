@@ -9,6 +9,7 @@ import type {
   RunSummary,
   SourceInspection,
   StorageReport,
+  UpdateState,
 } from "../main/ipc.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
@@ -66,6 +67,26 @@ const api = {
   purge: (what: "runs" | "everything"): Promise<Result<{ cancelled: boolean; freedBytes: number }>> =>
     ipcRenderer.invoke(CHANNELS.purge, { what }),
   reveal: (path: string): Promise<Result<{ revealed: boolean }>> => ipcRenderer.invoke(CHANNELS.reveal, { path }),
+
+  updateState: (): Promise<Result<UpdateState>> => ipcRenderer.invoke(CHANNELS.updateState),
+  updateCheck: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.updateCheck),
+  updateDownload: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.updateDownload),
+  /** Answers `installed: false` with a reason when a run is in flight. */
+  updateInstall: (): Promise<Result<{ installed: boolean; why: string | null }>> =>
+    ipcRenderer.invoke(CHANNELS.updateInstall),
+  updateChannel: (channel: "latest" | "beta"): Promise<Result<UpdateState>> =>
+    ipcRenderer.invoke(CHANNELS.updateChannel, { channel }),
+
+  /** Whether a run is in flight, so the main process can refuse to restart. */
+  busy: (busy: boolean): Promise<Result<{ busy: boolean }>> => ipcRenderer.invoke(CHANNELS.busy, { busy }),
+
+  onUpdateEvent: (callback: (event: unknown) => void): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void => callback(payload);
+    ipcRenderer.on(CHANNELS.updateEvent, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.updateEvent, listener);
+    };
+  },
 
   preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>

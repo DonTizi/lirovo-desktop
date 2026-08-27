@@ -88,6 +88,7 @@ type Inbound =
   | { id: string; type: "storage" }
   | { id: string; type: "purge"; what: "runs" | "everything" }
   | { id: string; type: "preferences" }
+  | { id: string; type: "setUpdateChannel"; channel: "latest" | "beta" }
   | { id: string; type: "setDefaultBackend"; backendId: string | null };
 
 type Outbound =
@@ -398,6 +399,9 @@ const preferences = (): Preferences =>
     return {
       defaultBackendId: settings.get("default_backend"),
       whisperModelId: settings.get("whisper_model"),
+      // Stable unless someone opted in. A preview build is a thing you choose,
+      // never a thing you are moved onto.
+      updateChannel: settings.get("update_channel") === "beta" ? "beta" : "latest",
     };
   });
 
@@ -552,6 +556,9 @@ const handle = async (message: Inbound): Promise<unknown> => {
     case "purge":
       return purge(message.what);
     case "preferences":
+      return preferences();
+    case "setUpdateChannel":
+      withDb((db) => createSettingsStore(db).set("update_channel", message.channel));
       return preferences();
     case "setDefaultBackend":
       return setDefaultBackend(message.backendId);

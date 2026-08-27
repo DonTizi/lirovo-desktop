@@ -15,12 +15,91 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
+================================================================================
+BUNDLED THIRD-PARTY PROGRAMS
+================================================================================
+
+The Lirovo macOS application DISTRIBUTES the programs below inside its
+application bundle, at Contents/Resources/bin. Lirovo runs each of them as a
+separate process; none of them is linked into Lirovo, and their licenses apply
+to those programs rather than to Lirovo's own source.
+
+--------------------------------------------------------------------------------
+FFmpeg  (ffmpeg, ffprobe)                                    https://ffmpeg.org
 --------------------------------------------------------------------------------
 
-This software invokes, but does not distribute, the following third-party
-programs. Their licenses apply to those programs, not to Lirovo:
+License: GPL-2.0-or-later.
 
-  ffmpeg / ffprobe   https://ffmpeg.org        (LGPL-2.1-or-later or GPL-2.0-or-later,
-                                                depending on the build)
-  yt-dlp             https://github.com/yt-dlp/yt-dlp   (Unlicense)
-  whisper.cpp        https://github.com/ggml-org/whisper.cpp  (MIT)
+The binaries distributed with Lirovo are the prebuilt macOS artifacts published
+by the ffmpeg-ffprobe-static project, taken from one pinned release:
+
+    https://github.com/descriptinc/ffmpeg-ffprobe-static
+    release tag: b6.1.2-rc.1
+
+WRITTEN OFFER OF SOURCE CODE
+
+  In accordance with sections 3(b) and 3(c) of the GNU General Public License,
+  version 2, the complete corresponding source code for the FFmpeg binaries
+  distributed with this application is available from FFmpeg's own source
+  repository, and the configuration used to build them is published by the
+  project named above:
+
+      https://github.com/FFmpeg/FFmpeg
+      https://github.com/descriptinc/ffmpeg-ffprobe-static
+
+  Anyone who receives this application may also request the complete
+  corresponding source code, on a physical medium, for no more than the cost of
+  performing the distribution, by writing to the copyright holder named at the
+  top of this file. This offer is valid for three years from the date this
+  application was distributed.
+
+Note: the two architectures may carry different FFmpeg versions. At the pinned
+tag above the arm64 artifact is FFmpeg 6.1.1 and the x86_64 artifact is
+FFmpeg 7.1. Both are covered by the offer above.
+
+--------------------------------------------------------------------------------
+whisper.cpp  (whisper-cli)          https://github.com/ggml-org/whisper.cpp
+--------------------------------------------------------------------------------
+
+License: MIT.
+
+  Copyright (c) 2023-2024 The ggml authors
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Built from source at tag v1.9.3 by apps/desktop/scripts/collect-binaries.mjs.
+
+--------------------------------------------------------------------------------
+yt-dlp                                   https://github.com/yt-dlp/yt-dlp
+--------------------------------------------------------------------------------
+
+License: The Unlicense (public domain dedication). No conditions apply.
+
+The `yt-dlp_macos` binary published by the project is distributed unmodified,
+verified against the SHA2-256SUMS published alongside it.
+
+================================================================================
+DOWNLOADED AT RUNTIME, NOT DISTRIBUTED
+================================================================================
+
+Lirovo can fetch these on request. They are never included in the application
+bundle, and are stored in the user's own data directory:
+
+  Whisper speech models     https://huggingface.co/ggerganov/whisper.cpp
+                            (MIT, as part of whisper.cpp)

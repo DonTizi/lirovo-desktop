@@ -38,6 +38,23 @@ export const saveSchemaRequestSchema = z.object({
 export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
 /** Null clears the choice and returns the app to picking the first available. */
+export const updateChannelSchema = z.object({ channel: z.enum(["latest", "beta"]) });
+
+/**
+ * The renderer telling the main process whether a run is in flight.
+ *
+ * The main process cannot see the engine's state, and the one question it must
+ * answer instantly — may I quit and install? — depends on it.
+ */
+export const busySchema = z.object({ busy: z.boolean() });
+
+export interface UpdateState {
+  readonly version: string;
+  readonly channel: "latest" | "beta";
+  /** Whether this copy can update at all: a dev run has no feed to ask. */
+  readonly supported: boolean;
+}
+
 /** What a purge is allowed to remove. Named, never a free path. */
 export const purgeSchema = z.object({ what: z.enum(["runs", "everything"]) });
 export const revealSchema = z.object({ path: z.string().min(1) });
@@ -66,6 +83,8 @@ export interface Preferences {
   readonly defaultBackendId: string | null;
   /** Which speech model transcribes, when more than one is installed. */
   readonly whisperModelId: string | null;
+  /** Stable or preview. Read before the window exists, so it lives here. */
+  readonly updateChannel: "latest" | "beta";
 }
 
 export interface SourceInspection {
@@ -108,6 +127,13 @@ export const CHANNELS = {
   storage: "lirovo:storage",
   purge: "lirovo:purge",
   reveal: "lirovo:reveal",
+  updateState: "lirovo:update-state",
+  updateCheck: "lirovo:update-check",
+  updateDownload: "lirovo:update-download",
+  updateInstall: "lirovo:update-install",
+  updateChannel: "lirovo:update-channel",
+  updateEvent: "lirovo:update-event",
+  busy: "lirovo:busy",
   installProgress: "lirovo:install-progress",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",

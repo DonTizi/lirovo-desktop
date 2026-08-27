@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { Fix } from "@lirovo/contracts";
 import { DEFAULT_WHISPER_MODEL_ID, WHISPER_MODELS } from "@lirovo/core";
-import type { Preferences, StorageReport } from "../../main/ipc.js";
+import type { Preferences, StorageReport, UpdateState } from "../../main/ipc.js";
 import { Hero } from "./hero";
 import { Mark } from "./logos";
 import { Skeleton } from "./primitives";
@@ -419,6 +419,115 @@ function SpeechModel({
   );
 }
 
+/**
+ * Which builds this copy accepts, and what it last found.
+ *
+ * Preview is opt-in and stays opt-in: nobody is moved onto prereleases by a
+ * default. Choosing it also means stable releases still arrive — a beta user
+ * who stops getting stable updates is a beta user stranded on an old build.
+ */
+function Updates(): JSX.Element {
+  const [state, setState] = useState<UpdateState | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const load = useCallback(() => {
+    void window.lirovo.updateState().then((answer) => {
+      if (answer.ok) setState(answer.value);
+    });
+  }, []);
+  useEffect(load, [load]);
+
+  useEffect(
+    () =>
+      window.lirovo.onUpdateEvent((raw) => {
+        const event = raw as { kind: string; version?: string; message?: string };
+        if (event.kind === "checking") setNote("checking…");
+        if (event.kind === "none") setNote("this is the newest build");
+        if (event.kind === "available") setNote(`${event.version} is available`);
+        if (event.kind === "ready") setNote(`${event.version} is downloaded`);
+        // Shown here and nowhere else: a failed check is not worth a toast, but
+        // somebody who came looking deserves the reason.
+        if (event.kind === "error") setNote(event.message ?? "the check failed");
+        if (event.kind !== "checking") setChecking(false);
+      }),
+    [],
+  );
+
+  return (
+    <Card title="Updates">
+      <div className="grid gap-x-8 gap-y-2 px-4 py-3 text-[13px]">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-ink-label">This copy</span>
+          <span className="text-ink-strong tabular-nums">{state?.version ?? "…"}</span>
+        </div>
+      </div>
+
+      <div className="border-hairline border-t">
+        {(["latest", "beta"] as const).map((channel) => {
+          const on = state?.channel === channel;
+          return (
+            <button
+              key={channel}
+              onClick={() => {
+                void window.lirovo.updateChannel(channel).then((answer) => {
+                  if (answer.ok) setState(answer.value);
+                });
+              }}
+              className={cn(
+                "border-hairline hover:bg-elevated flex w-full items-center gap-3 border-b px-4 py-2.5 text-left transition-colors last:border-b-0",
+                on && "bg-elevated",
+              )}
+            >
+              <span
+                className={cn(
+                  "grid size-4 shrink-0 place-items-center rounded-full border",
+                  on ? "border-ink-strong" : "border-line",
+                )}
+              >
+                {on && <span className="bg-ink-strong size-2 rounded-full" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="text-ink-strong block text-[13px] font-medium">
+                  {channel === "latest" ? "Stable" : "Preview"}
+                </span>
+                <span className="text-ink-subtle block text-xs">
+                  {channel === "latest"
+                    ? "Released builds only"
+                    : "Prereleases as they are cut, and every stable one too"}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="border-hairline flex items-center gap-3 border-t px-4 py-2.5">
+        <button
+          disabled={checking || state?.supported === false}
+          onClick={() => {
+            setChecking(true);
+            setNote("checking…");
+            void window.lirovo.updateCheck().then((answer) => {
+              if (!answer.ok) {
+                setChecking(false);
+                setNote(answer.error.message);
+              }
+            });
+          }}
+          className="border-hairline bg-base hover:bg-fill-hover flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={cn("size-3.5", checking && "animate-spin")} />
+          Check now
+        </button>
+        <span className="text-ink-subtle min-w-0 flex-1 truncate text-xs">
+          {state?.supported === false ? "a copy run from source does not update itself" : (note ?? "")}
+        </span>
+      </div>
+    </Card>
+  );
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
     <section className="border-hairline bg-base overflow-hidden rounded-xl border">
@@ -680,6 +789,7 @@ export function SettingsPage({
           </Card>
 
           <SpeechModel chosen={prefs?.whisperModelId ?? null} onChosen={onRecheck} />
+          <Updates />
         </div>
       </div>
 

@@ -6,9 +6,11 @@ import {
   CHANNELS,
   defaultBackendSchema,
   extractRequestSchema,
+  busySchema,
   installSchema,
   purgeSchema,
   revealSchema,
+  updateChannelSchema,
   inspectRequestSchema,
   runIdSchema,
   saveSchemaRequestSchema,
@@ -16,6 +18,7 @@ import {
 } from "./ipc.js";
 
 import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
+import { checkNow, currentVersion, downloadUpdate, installUpdate, setChannel, startUpdater, type UpdateChannel } from "./updater.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -141,8 +144,39 @@ const guard =
     return result(() => handler(payload));
   };
 
+/**
+ * Whether a run is in flight, as last reported by the renderer.
+ *
+ * The main process cannot see the engine's state, and the one question it
+ * needs answering — may I quit and install? — has to be answerable
+ * immediately. So the renderer tells it when the answer changes.
+ */
+let busy = false;
+
+/**
+ * The channel this launch started on.
+ *
+ * Read once from the settings table before the first check, because the
+ * updater needs it before the window exists and the engine process is the only
+ * thing that can read the database.
+ */
+let channelAtBoot: UpdateChannel = "latest";
+
 app.whenReady().then(() => {
   installMediaProtocol();
+
+  void ask<{ updateChannel: UpdateChannel }>({ type: "preferences" })
+    .then((prefs) => {
+      channelAtBoot = prefs.updateChannel;
+      setChannel(channelAtBoot);
+    })
+    .catch(() => undefined);
+
+  startUpdater({
+    send: (event) => window?.webContents.send(CHANNELS.updateEvent, event),
+    canRestart: () => !busy,
+    channel: () => channelAtBoot,
+  });
   ipcMain.handle(CHANNELS.doctor, guard(() => ask({ type: "doctor" })));
   ipcMain.handle(CHANNELS.listRuns, guard(() => ask({ type: "listRuns" })));
 
@@ -187,6 +221,40 @@ app.whenReady().then(() => {
     }),
   );
   ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
+
+  // --- updates -------------------------------------------------------------
+  //
+  // The channel lives in the same settings table as every other preference, so
+  // it survives a restart and the engine process is the one place that reads
+  // it. `busy` is what the renderer told us about a run in flight: the main
+  // process cannot see the engine's state, and asking across two hops to
+  // answer a button press would make the button feel broken.
+  ipcMain.handle(
+    CHANNELS.updateState,
+    guard(async () => {
+      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
+      return { version: currentVersion(), channel: prefs.updateChannel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(CHANNELS.updateCheck, guard(() => checkNow()));
+  ipcMain.handle(CHANNELS.updateDownload, guard(() => downloadUpdate()));
+  ipcMain.handle(CHANNELS.updateInstall, guard(async () => installUpdate(() => !busy)));
+  ipcMain.handle(
+    CHANNELS.updateChannel,
+    guard(async (payload) => {
+      const { channel } = updateChannelSchema.parse(payload);
+      setChannel(channel);
+      await ask({ type: "setUpdateChannel", channel });
+      return { version: currentVersion(), channel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(
+    CHANNELS.busy,
+    guard(async (payload) => {
+      busy = busySchema.parse(payload).busy;
+      return { busy };
+    }),
+  );
 
   /**
    * A native confirmation, not a web one.

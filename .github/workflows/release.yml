@@ -1,0 +1,88 @@
+# Build, sign, notarise and publish, into the release that triggered this.
+#
+# One workflow serves both channels, and the workflow does not decide which:
+# the VERSION does. `0.4.0-beta.1` makes electron-builder write `beta-mac.yml`
+# and only a beta user sees it; `0.4.0` writes `latest-mac.yml` and everyone
+# does. So a preview is a prerelease you publish by hand, a production build is
+# the release-please release, and this file treats them identically.
+name: release
+
+on:
+  release:
+    types: [published]
+
+# Never two at once. Two concurrent publishes into the same release race on
+# `latest-mac.yml`, and the loser's architecture disappears from the feed.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: ${{ matrix.arch }}
+    runs-on: macos-14
+    timeout-minutes: 90
+    strategy:
+      # Not fail-fast: if arm64 notarisation times out there is no reason to
+      # throw away a finished x64 build. A half-published release is fixed by
+      # re-running one job.
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, not the branch: a release cut from an older commit must
+          # build that commit.
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Per target arch, never the host's. The runners are arm64, so without
+      # the flag the x64 DMG would carry arm64 tools — which happened once, and
+      # built green. The afterPack hook now refuses it, but the flag is what
+      # stops it being refused in the first place.
+      - name: collect the bundled tools
+        run: pnpm --filter lirovo-desktop exec node scripts/collect-binaries.mjs --${{ matrix.arch }}
+
+      - run: pnpm --filter lirovo-desktop build
+
+      - name: sign, notarise and publish
+        env:
+          # The Developer ID certificate, base64 of the .p12.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # notarytool credentials. An app-specific password, not the account's.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # electron-builder publishes to the repo this ran in.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter lirovo-desktop exec electron-builder --mac --${{ matrix.arch }} --publish always
+
+      # Proof, in the log, that what shipped is what we think shipped. Cheap,
+      # and the only place anyone will look after a Gatekeeper complaint.
+      - name: verify the signature and the notarisation
+        run: |
+          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
+          echo "── the app itself"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Signature|flags"
+          echo "── every bundled tool"
+          for tool in "$APP"/Contents/Resources/bin/*; do
+            printf '%-14s ' "$(basename "$tool")"
+            codesign -dv "$tool" 2>&1 | grep -c Authority | tr -d '\n'
+            echo " authorities · $(file -b "$tool" | head -c 48)"
+          done
+          echo "── Gatekeeper's own verdict"
+          spctl -a -vvv -t install "$APP"
