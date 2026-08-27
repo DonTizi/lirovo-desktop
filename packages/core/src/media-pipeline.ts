@@ -179,7 +179,14 @@ export const runMediaPipeline = async (
 
     // Transcription and the visual branch are independent, so they run together
     // — on a long recording the frames are ready by the time whisper finishes.
-    const [transcribed, visual] = await Promise.all([
+    //
+    // Settled, not `all`: `all` rejects the moment transcription fails and
+    // leaves the visual branch running behind it, so the caller closes the
+    // database while scene-detect is still working and its ledger write lands
+    // on a closed handle ("scene-detect degraded: database is not open"). The
+    // stage's real outcome is lost and the user is shown a failure that never
+    // happened. Waiting for both means nothing is in flight when this returns.
+    const asrRun = 
       stage("asr", normalized.hash, null, () =>
         deps.asr.transcribe({
           runId: input.runId,
@@ -188,8 +195,9 @@ export const runMediaPipeline = async (
           audioPath: normalized.value.audio_path,
           signal: input.signal,
         }),
-      ),
-      (async () => {
+      );
+
+    const visualRun = (async () => {
         if (normalized.value.video_path === null) {
           for (const skipped of ["scene-detect", "dedup"] as const) {
             emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
@@ -233,8 +241,13 @@ export const runMediaPipeline = async (
           message: lirovo.message,
         });
         return { raw: 0, kept: 0, dropped: 0 };
-      }),
-    ]);
+      });
+
+    const [asrSettled, visualSettled] = await Promise.allSettled([asrRun, visualRun]);
+    if (visualSettled.status === "rejected") throw visualSettled.reason;
+    if (asrSettled.status === "rejected") throw asrSettled.reason;
+    const transcribed = asrSettled.value;
+    const visual = visualSettled.value;
 
     const transcript = transcribed.value;
     await deps.store.put(

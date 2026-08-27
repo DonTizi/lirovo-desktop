@@ -4118,52 +4118,57 @@ const runMediaPipeline = async (input, deps) => {
       mediaPath: ingested.value.mediaPath,
       signal: input.signal
     }));
-    const [transcribed, visual] = await Promise.all([
-      stage("asr", normalized.hash, null, () => deps.asr.transcribe({
-        runId: input.runId,
-        sourceKind: ingested.value.manifest.source_type === "file" ? "file" : "url",
-        sourceUri: input.source,
-        audioPath: normalized.value.audio_path,
-        signal: input.signal
-      })),
-      (async () => {
-        if (normalized.value.video_path === null) {
-          for (const skipped of ["scene-detect", "dedup"]) {
-            emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
-          }
-          return { raw: 0, kept: 0, dropped: 0 };
+    const asrRun = stage("asr", normalized.hash, null, () => deps.asr.transcribe({
+      runId: input.runId,
+      sourceKind: ingested.value.manifest.source_type === "file" ? "file" : "url",
+      sourceUri: input.source,
+      audioPath: normalized.value.audio_path,
+      signal: input.signal
+    }));
+    const visualRun = (async () => {
+      if (normalized.value.video_path === null) {
+        for (const skipped of ["scene-detect", "dedup"]) {
+          emit({ type: "stage:skipped", runId: input.runId, stage: skipped, why: "the source has no video track" });
         }
-        const detected = await stage("scene-detect", normalized.hash, { frameCap: input.frameCap }, () => deps.stages.sceneDetect({
-          runId: input.runId,
-          videoPath: normalized.value.video_path,
-          frameCap: input.frameCap,
-          signal: input.signal
-        }));
-        if (detected.value.rawFrameCount === 0) {
-          emit({ type: "stage:skipped", runId: input.runId, stage: "dedup", why: "no scene changes were detected" });
-          return { raw: 0, kept: 0, dropped: 0 };
-        }
-        const deduped = await stage("dedup", detected.hash, null, () => deps.stages.dedup({ runId: input.runId, signal: input.signal }));
-        return {
-          raw: detected.value.rawFrameCount,
-          kept: deduped.value.keptCount,
-          dropped: deduped.value.droppedCount
-        };
-      })().catch((error) => {
-        const lirovo = asLirovoError(error, "SCENE_DETECT_FAILED", { stage: "scene-detect" });
-        if (lirovo.code === "CANCELLED" || lirovo.code === "FRAME_BUDGET_EXCEEDED")
-          throw lirovo;
-        degraded.push({ stage: "vision", code: lirovo.code, message: lirovo.message });
-        emit({
-          type: "stage:degraded",
-          runId: input.runId,
-          stage: "scene-detect",
-          code: lirovo.code,
-          message: lirovo.message
-        });
         return { raw: 0, kept: 0, dropped: 0 };
-      })
-    ]);
+      }
+      const detected = await stage("scene-detect", normalized.hash, { frameCap: input.frameCap }, () => deps.stages.sceneDetect({
+        runId: input.runId,
+        videoPath: normalized.value.video_path,
+        frameCap: input.frameCap,
+        signal: input.signal
+      }));
+      if (detected.value.rawFrameCount === 0) {
+        emit({ type: "stage:skipped", runId: input.runId, stage: "dedup", why: "no scene changes were detected" });
+        return { raw: 0, kept: 0, dropped: 0 };
+      }
+      const deduped = await stage("dedup", detected.hash, null, () => deps.stages.dedup({ runId: input.runId, signal: input.signal }));
+      return {
+        raw: detected.value.rawFrameCount,
+        kept: deduped.value.keptCount,
+        dropped: deduped.value.droppedCount
+      };
+    })().catch((error) => {
+      const lirovo = asLirovoError(error, "SCENE_DETECT_FAILED", { stage: "scene-detect" });
+      if (lirovo.code === "CANCELLED" || lirovo.code === "FRAME_BUDGET_EXCEEDED")
+        throw lirovo;
+      degraded.push({ stage: "vision", code: lirovo.code, message: lirovo.message });
+      emit({
+        type: "stage:degraded",
+        runId: input.runId,
+        stage: "scene-detect",
+        code: lirovo.code,
+        message: lirovo.message
+      });
+      return { raw: 0, kept: 0, dropped: 0 };
+    });
+    const [asrSettled, visualSettled] = await Promise.allSettled([asrRun, visualRun]);
+    if (visualSettled.status === "rejected")
+      throw visualSettled.reason;
+    if (asrSettled.status === "rejected")
+      throw asrSettled.reason;
+    const transcribed = asrSettled.value;
+    const visual = visualSettled.value;
     const transcript = transcribed.value;
     await deps.store.put(input.runId, ARTIFACT_PATHS.transcript, `${JSON.stringify({ run_id: input.runId, ...transcript }, null, 2)}
 `);
@@ -4829,8 +4834,11 @@ const parseProbe = (json) => {
 };
 const probeMedia = async (exec, ffprobePath, mediaPath) => {
   const { stdout } = await exec(ffprobePath, [
+    // `error`, not `quiet`: when ffprobe refuses a file the reason is on
+    // stderr ("moov atom not found", "Invalid data found"), and silencing it
+    // leaves the caller holding an exit code and an empty JSON object.
     "-v",
-    "quiet",
+    "error",
     "-print_format",
     "json",
     "-show_format",
@@ -4944,9 +4952,10 @@ const summarizeYtDlpFailure = (message) => {
   const errors = message.split("\n").filter((line) => line.trim().startsWith("ERROR:")).map((line) => line.replace(/^\s*ERROR:\s*/, "").trim());
   if (errors.length === 0)
     return ((_a = message.split("\n")[0]) == null ? void 0 : _a.trim()) ?? message;
-  return explainYtDlpError(errors.join("; "));
+  return errors.join("; ");
 };
 const explainYtDlpError = (message) => {
+  var _a;
   if (/HTTP Error 429|Too Many Requests/i.test(message)) {
     return `the platform is rate-limiting downloads from this address — wait a few minutes (${message})`;
   }
@@ -4957,7 +4966,13 @@ const explainYtDlpError = (message) => {
     return `this video is not available to download — it may be private, deleted, or restricted (${message})`;
   }
   if (/is not a valid URL|Unsupported URL/i.test(message)) {
-    return `that link is not one yt-dlp knows how to open (${message})`;
+    return "that link is not one yt-dlp knows how to open — it needs a page with a video on it";
+  }
+  const host = (_a = /Failed to resolve '([^']+)'/.exec(message)) == null ? void 0 : _a[1];
+  if (host !== void 0)
+    return `${host} could not be reached — check the address, and the network`;
+  if (/nodename nor servname|getaddrinfo|Temporary failure in name resolution/i.test(message)) {
+    return "that address could not be reached — check the link, and the network";
   }
   return message;
 };
@@ -4998,7 +5013,7 @@ const createCaptionsStrategy = (deps) => ({
       ], { cwd: dir, signal: req.signal, timeoutMs: 12e4 }).catch((error) => {
         if (error instanceof LirovoError && error.code === "CANCELLED")
           throw error;
-        failure = summarizeYtDlpFailure(error instanceof Error ? error.message : String(error));
+        failure = explainYtDlpError(summarizeYtDlpFailure(error instanceof Error ? error.message : String(error)));
       });
       const vttFile = (await readdir(dir)).find((f) => f.endsWith(".vtt"));
       if (vttFile === void 0) {
@@ -5121,9 +5136,12 @@ const ingest = async (input, deps) => {
     }
   }
   const probe = await probeMedia(deps.exec, deps.ffprobe, mediaPath).catch((error) => {
-    if (error instanceof LirovoError)
+    if (error instanceof LirovoError && (error.code === "CANCELLED" || error.code === "TIMED_OUT"))
       throw error;
-    throw new LirovoError("PROBE_FAILED", error instanceof Error ? error.message : String(error), { stage: "ingest" });
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new LirovoError("PROBE_FAILED", `ffprobe could not read ${path.basename(mediaPath)}: ${detail}`, {
+      stage: "ingest"
+    });
   });
   if (!probe.hasAudio && !probe.hasVideo) {
     throw new LirovoError("SOURCE_UNSUPPORTED", "the source has neither an audio nor a video track", {
@@ -8014,15 +8032,23 @@ const createSchemaStore = (db) => ({
     return row === void 0 ? null : toRevision(row, row.id);
   },
   save(input) {
+    const name = input.name.trim();
+    if (name === "") {
+      throw new LirovoError("SCHEMA_VALIDATION_FAILED", "a schema needs a name", { detail: { field: "name" } });
+    }
+    const unnamed = input.fields.find((f) => toPropertyName(f.name) === "");
+    if (unnamed !== void 0) {
+      throw new LirovoError("SCHEMA_VALIDATION_FAILED", `a field needs a name with at least one letter or digit (got ${JSON.stringify(unnamed.name)})`, { detail: { field: "fields" } });
+    }
     const at = nowS();
     const fingerprint = sha256$1(fieldsFingerprint(input.fields));
     const json = JSON.stringify(compileSchema(input.fields));
     let schemaId = input.schemaId;
     if (schemaId === void 0) {
       schemaId = newId("schema");
-      db.prepare("INSERT INTO schemas (id, name, description, created_at) VALUES (?, ?, ?, ?)").run(schemaId, input.name, input.description ?? null, at);
+      db.prepare("INSERT INTO schemas (id, name, description, created_at) VALUES (?, ?, ?, ?)").run(schemaId, name, input.description ?? null, at);
     } else {
-      db.prepare("UPDATE schemas SET name = ?, description = ? WHERE id = ?").run(input.name, input.description ?? null, schemaId);
+      db.prepare("UPDATE schemas SET name = ?, description = ? WHERE id = ?").run(name, input.description ?? null, schemaId);
     }
     const existing = db.prepare("SELECT * FROM schema_revisions WHERE schema_id = ? AND schema_sha256 = ? ORDER BY version DESC LIMIT 1").get(schemaId, fingerprint);
     if (existing !== void 0) {

@@ -101,3 +101,34 @@ describe("schema store", () => {
     expect(store.revisions(first.schemaId)).toHaveLength(1);
   });
 });
+
+describe("what a schema refuses", () => {
+  let db: Db;
+  let store: SchemaStore;
+  beforeEach(() => {
+    db = openMemoryDatabase();
+    store = createSchemaStore(db);
+  });
+
+  it("refuses a blank name, which would be unpointable in any list", () => {
+    expect(() => store.save({ name: "", fields: talk })).toThrow(/needs a name/);
+    expect(() => store.save({ name: "   ", fields: talk })).toThrow(/needs a name/);
+  });
+
+  it("trims the name it stores, so two schemas cannot differ by a space", () => {
+    store.save({ name: "  Talks  ", fields: talk });
+    expect(store.list()[0]?.name).toBe("Talks");
+    expect(() => store.save({ name: "Talks", fields: talk })).toThrow();
+  });
+
+  it("refuses a field whose name has no letters or digits", () => {
+    // It would compile to a JSON Schema property called "", which the model is
+    // then asked to fill in.
+    expect(() => store.save({ name: "bad", fields: [{ name: "  ", kind: "text" }] })).toThrow(/at least one letter/);
+    expect(() => store.save({ name: "bad", fields: [{ name: "!!!", kind: "text" }] })).toThrow(/at least one letter/);
+  });
+
+  it("still allows a schema with no fields: transcribe-only is a real ask", () => {
+    expect(store.save({ name: "transcript only", fields: [] }).fields).toEqual([]);
+  });
+});

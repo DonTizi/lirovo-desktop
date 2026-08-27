@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from "node:crypto";
-import { makeId } from "@lirovo/contracts";
-import { compileSchema, decompileSchema, fieldsFingerprint, type FieldSpec } from "@lirovo/core";
+import { LirovoError, makeId } from "@lirovo/contracts";
+import { compileSchema, decompileSchema, fieldsFingerprint, toPropertyName, type FieldSpec } from "@lirovo/core";
 import type { Db } from "./db.js";
 
 const newId = (kind: Parameters<typeof makeId>[0]): string => makeId(kind, randomBytes(10));
@@ -117,6 +117,23 @@ export const createSchemaStore = (db: Db): SchemaStore => ({
   },
 
   save(input) {
+    // Refused here, not only in the form that happens to be in front of a
+    // user. A blank name makes a schema that cannot be pointed at in any list,
+    // and a field whose name has no usable characters compiles to a JSON
+    // Schema property called "" — which the model is then asked to fill in.
+    const name = input.name.trim();
+    if (name === "") {
+      throw new LirovoError("SCHEMA_VALIDATION_FAILED", "a schema needs a name", { detail: { field: "name" } });
+    }
+    const unnamed = input.fields.find((f) => toPropertyName(f.name) === "");
+    if (unnamed !== undefined) {
+      throw new LirovoError(
+        "SCHEMA_VALIDATION_FAILED",
+        `a field needs a name with at least one letter or digit (got ${JSON.stringify(unnamed.name)})`,
+        { detail: { field: "fields" } },
+      );
+    }
+
     const at = nowS();
     const fingerprint = sha256(fieldsFingerprint(input.fields));
     const json = JSON.stringify(compileSchema(input.fields));
@@ -126,13 +143,13 @@ export const createSchemaStore = (db: Db): SchemaStore => ({
       schemaId = newId("schema");
       db.prepare("INSERT INTO schemas (id, name, description, created_at) VALUES (?, ?, ?, ?)").run(
         schemaId,
-        input.name,
+        name,
         input.description ?? null,
         at,
       );
     } else {
       db.prepare("UPDATE schemas SET name = ?, description = ? WHERE id = ?").run(
-        input.name,
+        name,
         input.description ?? null,
         schemaId,
       );
