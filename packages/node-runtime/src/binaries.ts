@@ -21,7 +21,25 @@ interface Resolved {
 }
 
 /**
- * Bundled, then what this app installed, then PATH, then Homebrew.
+ * Tools that go stale on someone else's schedule.
+ *
+ * yt-dlp is the whole set. YouTube changes its player every few weeks and an
+ * old build stops being able to download while still reading metadata
+ * perfectly well — the failure looks like a broken video, not a stale tool.
+ * Whatever ships inside a DMG is frozen at the day that DMG was built, so for
+ * these the app's own verified download wins over the bundled copy. Anything
+ * else stays bundled-first, because a signed build should use the binary it
+ * was notarised with.
+ *
+ * `installed` is not "whatever is lying around": it is only ever written by
+ * `installArtifact`, which checks the publisher's own SHA-256 before the file
+ * is given its final name.
+ */
+const PERISHABLE: ReadonlySet<string> = new Set(["yt-dlp"]);
+
+/**
+ * Bundled, then what this app installed, then PATH, then Homebrew — with the
+ * first two swapped for anything in `PERISHABLE`.
  *
  * Bundled wins so a signed build uses the binary it was notarised with rather
  * than whatever the user happens to have installed. The app's own `bin`
@@ -35,12 +53,20 @@ export const resolveBinary = async (
   paths: LirovoPaths,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Resolved | null> => {
-  if (paths.bundledBin !== null) {
-    const bundled = path.join(paths.bundledBin, id);
-    if (await isExecutable(bundled)) return { path: bundled, origin: "bundled" };
-  }
+  const bundled = paths.bundledBin === null ? null : path.join(paths.bundledBin, id);
   const installed = path.join(paths.data, "bin", id);
-  if (await isExecutable(installed)) return { path: installed, origin: "installed" };
+  const order: readonly Resolved[] = PERISHABLE.has(id)
+    ? [
+        { path: installed, origin: "installed" },
+        ...(bundled === null ? [] : [{ path: bundled, origin: "bundled" } as const]),
+      ]
+    : [
+        ...(bundled === null ? [] : [{ path: bundled, origin: "bundled" } as const]),
+        { path: installed, origin: "installed" },
+      ];
+  for (const candidate of order) {
+    if (await isExecutable(candidate.path)) return candidate;
+  }
   for (const dir of (env["PATH"] ?? "").split(path.delimiter)) {
     if (dir === "") continue;
     const candidate = path.join(dir, id);

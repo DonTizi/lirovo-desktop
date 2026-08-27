@@ -7,7 +7,16 @@ import {
   whisperModelInstallable,
   type Installable,
 } from "@lirovo/core";
-import { installArtifact, resolveBinary, resolvePaths, type InstallProgress } from "@lirovo/node-runtime";
+import {
+  STALE_AFTER_DAYS,
+  installArtifact,
+  parseVersion,
+  realExec,
+  resolveBinary,
+  resolvePaths,
+  versionAgeDays,
+  type InstallProgress,
+} from "@lirovo/node-runtime";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 
 export interface InstallOptions {
@@ -17,6 +26,22 @@ export interface InstallOptions {
 }
 
 const mb = (n: number): string => `${(n / 1_000_000).toFixed(0)} MB`;
+
+/**
+ * How old the yt-dlp at this path is, in days.
+ *
+ * Unreadable version, unparseable version, or a binary that will not run: all
+ * answer zero, which reads as fresh. Guessing "stale" from a failed probe
+ * would download 37MB every time the probe was merely unlucky.
+ */
+const ageInDays = async (bin: string): Promise<number> => {
+  try {
+    const result = await realExec(bin, ["--version"], { timeoutMs: 30_000 });
+    return versionAgeDays(parseVersion(result.stdout)) ?? 0;
+  } catch {
+    return 0;
+  }
+};
 
 /**
  * A progress line, drawn only when it would change.
@@ -55,13 +80,24 @@ export const installCommand = async (
     return EXIT.usage;
   }
 
-  // Skip what the machine already has. Downloading a second yt-dlp over a
-  // working one wastes 37MB and then shadows it — and the copy it shadows may
-  // be the faster-starting Homebrew build.
+  // Skip what the machine already has, unless what it has has gone stale.
+  //
+  // Downloading a second yt-dlp over a working one wastes 37MB and then
+  // shadows it — and the copy it shadows may be the faster-starting Homebrew
+  // one. But a copy bundled inside a DMG is frozen at the day that DMG was
+  // built, and yt-dlp older than ninety days stops being able to download from
+  // YouTube while still reading metadata fine. Refusing to refresh it leaves
+  // the one failure this command exists to fix.
   const already = await resolveBinary("yt-dlp", paths);
-  const wanted: Installable[] = already === null ? [model, YT_DLP] : [model];
+  const stale = already === null ? false : (await ageInDays(already.path)) > STALE_AFTER_DAYS;
+  const fetchYtDlp = already === null || (already.origin === "bundled" && stale);
+  const wanted: Installable[] = fetchYtDlp ? [model, YT_DLP] : [model];
   if (already !== null && !opts.json) {
-    stdout(`  yt-dlp         already on this Mac (${already.origin}) — leaving it alone`);
+    stdout(
+      fetchYtDlp
+        ? `  yt-dlp         the bundled copy is over ${STALE_AFTER_DAYS} days old — fetching a current one`
+        : `  yt-dlp         already on this Mac (${already.origin}) — leaving it alone`,
+    );
   }
   const done: { id: string; path: string; alreadyPresent: boolean }[] = [];
 

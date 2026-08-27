@@ -360,4 +360,31 @@ describe("where a binary is looked for", () => {
     const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
     expect((await resolveBinary("ffmpeg", paths, { PATH: "" }))?.origin).toBe("bundled");
   });
+
+  it("lets an updated yt-dlp beat the one frozen inside the DMG", async () => {
+    // The opposite rule, and deliberately so. ffmpeg bundled in March still
+    // works in December; a yt-dlp bundled in March does not, because YouTube
+    // moved. If the bundled copy always won there would be no way to fix that
+    // short of shipping a whole new release.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    for (const dir of ["bin", "bundled"]) await mkdir(path.join(data, dir), { recursive: true });
+    for (const dir of ["bin", "bundled"]) {
+      const f = path.join(data, dir, "yt-dlp");
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("yt-dlp", paths, { PATH: "" }))?.origin).toBe("installed");
+  });
+
+  it("still finds the bundled yt-dlp when nothing has been installed", async () => {
+    // The swap must not cost a fresh install its only copy.
+    const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));
+    await mkdir(path.join(data, "bundled"), { recursive: true });
+    const f = path.join(data, "bundled", "yt-dlp");
+    await writeFile(f, "#!/bin/sh\n");
+    await chmod(f, 0o755);
+    const paths = { data, runs: "", models: "", bundledBin: path.join(data, "bundled"), dbFile: "" };
+    expect((await resolveBinary("yt-dlp", paths, { PATH: "" }))?.origin).toBe("bundled");
+  });
 });
