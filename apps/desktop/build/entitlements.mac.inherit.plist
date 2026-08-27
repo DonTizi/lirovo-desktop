@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Everything that is not the main binary: the Electron helpers, and the four
+  tools in Resources/bin.
+
+  electron-builder has one inherit file, not one per file, so this is the union
+  of what the helpers need and what the tools need. Each key below names the
+  consumer that forces it, so it can be dropped the day that consumer goes.
+-->
+<plist version="1.0">
+<dict>
+  <!-- Renderer and GPU helpers. This is the only key @electron/osx-sign gives
+       them. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- yt-dlp. A PyInstaller onefile unpacks an interpreter and its shared
+       objects into a temp directory and dlopens them; they carry no signature
+       of ours, so library validation refuses them. Goes when yt-dlp stops
+       being bundled. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- yt-dlp again. Its bootloader sets DYLD_ variables to find what it just
+       unpacked, and the hardened runtime strips those without this. -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- Kept, not justified. @electron/osx-sign gives this only to the plugin
+       helper, so it is probably unnecessary for ours — but dropping it is the
+       classic cause of "signed build crashes on launch", and no signed build
+       of this app exists yet to test the claim on. Revisit once one does;
+       see spikes/release-pipeline/NOTES.md. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

@@ -50,7 +50,9 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  # Applies to the helpers AND to everything in `binaries` below — see the
+  # comment at the top of each file.
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   # Signed as well as copied. `extraResources` alone leaves them unsigned.
   binaries:
     - resources/bin/ffmpeg

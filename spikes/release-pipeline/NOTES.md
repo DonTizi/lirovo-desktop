@@ -122,6 +122,27 @@ look in. It does now.
 
 ---
 
+### 7. The main binary was carrying yt-dlp's entitlements
+
+`entitlements` and `entitlementsInherit` pointed at the same file. electron-builder gives
+`entitlements` to the .app bundle alone and `entitlementsInherit` to **every other Mach-O it
+signs** — the helpers, and everything listed in `mac.binaries`. One file for both meant the most
+privileged process in the app was signed with `disable-library-validation` and
+`allow-dyld-environment-variables`, two keys that exist only so a PyInstaller binary can unpack
+itself and dlopen what it unpacked.
+
+Split. The main binary now carries `allow-jit` and `network.client`; @electron/osx-sign gives its
+main app `allow-jit` alone, so this is one key above that floor. The inherit file is the union of
+what the helpers need and what the tools need, with each key naming the consumer that forces it.
+
+**Open, and deliberately so:** `allow-unsigned-executable-memory` stays in the inherit file
+without a justification. @electron/osx-sign gives it only to the *plugin* helper — renderer and
+GPU get `allow-jit` alone — so it is probably unnecessary here. Dropping it is also the classic
+cause of "the signed build crashes on launch", and there is no signed build of this app to test
+the claim against. First signed build: drop it, launch, and keep the answer.
+
+---
+
 ## Still open
 
 - **Signing and notarisation.** Everything above is unsigned (`CSC_IDENTITY_AUTO_DISCOVERY=false`).

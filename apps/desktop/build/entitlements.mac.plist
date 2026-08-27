@@ -1,45 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The shortest list that works.
+  The main application binary, and nothing else.
 
-  Every entitlement is an attack surface, so anything not needed is absent:
-  no camera, no microphone, no address book, no user-selected files beyond the
-  open panel the app already uses.
+  electron-builder gives this file to the .app bundle alone; every other
+  Mach-O it signs — the helpers AND the bundled tools in Resources/bin — gets
+  entitlements.mac.inherit.plist instead. Keeping them as one file meant the
+  most privileged process in the app carried entitlements that exist only so a
+  PyInstaller binary can unpack itself.
+
+  Compare with @electron/osx-sign, which gives the main app `allow-jit` and
+  nothing more. This adds one key to that, and no others: no camera, no
+  microphone, no address book, no user-selected files beyond the open panel
+  the app already uses.
 -->
 <plist version="1.0">
 <dict>
-  <!--
-    Electron needs both: V8 compiles JavaScript at runtime, which the hardened
-    runtime otherwise refuses. Without them the app does not start at all.
-  -->
+  <!-- V8 compiles JavaScript at runtime; the hardened runtime otherwise
+       refuses and the app does not start. -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
-  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-  <true/>
 
-  <!--
-    The bundled tools are signed by us but were not built by us, so the
-    libraries they load carry someone else's team identifier. Without this the
-    loader refuses them inside our bundle.
-  -->
-  <key>com.apple.security.cs.disable-library-validation</key>
-  <true/>
-
-  <!--
-    yt-dlp is a PyInstaller bundle: it unpacks an interpreter into a temp
-    directory and executes it. That is code this app did not sign, run from a
-    path it does not own. Present only for as long as yt-dlp is bundled — if
-    the spike drops it, this goes with it.
-  -->
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
-
-  <!--
-    Fetching a speech model, downloading a video, and reaching a model server
-    on localhost. The app makes no inbound connections and needs no server
-    entitlement.
-  -->
+  <!-- Fetching a speech model, downloading a video, and reaching a model
+       server on localhost. The app makes no inbound connections and needs no
+       server entitlement. -->
   <key>com.apple.security.network.client</key>
   <true/>
 </dict>
