@@ -10,6 +10,10 @@ on:
   push:
     branches: [main]
 
+# Read, and nothing else. A check does not write anywhere.
+permissions:
+  contents: read
+
 concurrency:
   # One run per branch. Pushing three times in a minute should not hold three
   # macOS runners.
@@ -22,11 +26,12 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 10 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -42,10 +47,11 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 10 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -67,7 +73,7 @@ jobs:
 
       # Downloadable from the run. Unsigned, so it will not launch without the
       # user overriding Gatekeeper — which is the honest state of a PR build.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lirovo-arm64-unsigned
           path: apps/desktop/release/*.dmg

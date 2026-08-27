@@ -25,6 +25,19 @@ jobs:
     name: ${{ matrix.arch }}
     runs-on: macos-14
     timeout-minutes: 90
+
+    # The signing secrets live in this environment, not on the repository. Two
+    # things follow, and both matter more in a public repo:
+    #
+    #   No other workflow can read them, however it got onto main. A job has to
+    #   name this environment, and the only job that does is this one.
+    #
+    #   Configure it with a required reviewer and every signed build waits for a
+    #   person. The certificate can sign anything as its owner, so the question
+    #   worth a human is not "is this version right" but "did I intend to run
+    #   the code that is about to hold my Developer ID".
+    environment: release
+
     strategy:
       # Not fail-fast: if arm64 notarisation times out there is no reason to
       # throw away a finished x64 build. A half-published release is fixed by
@@ -34,15 +47,19 @@ jobs:
         arch: [arm64, x64]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The tag, not the branch: a release cut from an older commit must
           # build that commit.
           ref: ${{ github.event.release.tag_name }}
+          # By default checkout leaves a repo-write token in .git/config, where
+          # every later step — including a dependency's build script — can read
+          # it. Publishing gets its token explicitly, further down.
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 10 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
