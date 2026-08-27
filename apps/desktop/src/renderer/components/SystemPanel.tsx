@@ -21,53 +21,54 @@ type Health = "ok" | "warn" | "off";
 interface Item {
   readonly id: string;
   readonly name: string;
-  /** What it is for. Constant, so the row still reads when everything is fine. */
-  readonly role: string;
   /** Version and origin when it works; the reason, or the command, when not. */
   readonly detail: string;
+  /** What it is for. On hover only: a user needs it once, not on every render. */
+  readonly role: string;
   readonly health: Health;
+  /** Right-hand word. Empty when the row is fine — silence is the good state. */
   readonly state: string;
   readonly fix: Fix | null;
 }
 
-/**
- * Names as a person would say them, not as the binary is called.
- *
- * `whisper-cli` is a build artefact of whisper.cpp and means nothing to someone
- * deciding whether their Mac can transcribe without the network.
- */
 const NAMES: Record<string, string> = {
   ffmpeg: "FFmpeg",
-  ffprobe: "FFprobe",
   "yt-dlp": "yt-dlp",
-  "whisper-cli": "Whisper",
   local: "Ollama",
   codex: "Codex",
   claude: "Claude Code",
   captions: "Subtitles",
-  "whisper-cpp": "Whisper on this Mac",
+  "whisper-cpp": "Whisper",
   "whisper-api": "Whisper API",
 };
 
 const ROLES: Record<string, string> = {
-  ffmpeg: "cuts frames and audio",
-  ffprobe: "reads duration and streams",
-  "yt-dlp": "downloads links and subtitles",
-  "whisper-cli": "transcribes without the network",
+  ffmpeg: "cuts frames and audio, reads duration and streams",
+  "yt-dlp": "downloads links and their subtitles",
   local: "runs a model on this Mac",
   codex: "reads frames and builds the graph",
   claude: "reads frames and builds the graph",
-  captions: "free transcript when the platform has one",
-  "whisper-cpp": "on-device transcription",
+  captions: "free transcript when the platform publishes one",
+  "whisper-cpp": "transcription on this Mac, no network",
   "whisper-api": "transcription off the machine",
 };
 
 const label = (id: string): string => NAMES[id] ?? id;
 
 const DOT: Record<Health, string> = { ok: "bg-success", warn: "bg-warning", off: "bg-danger" };
+const RANK: Record<Health, number> = { off: 0, warn: 1, ok: 2 };
+
+/**
+ * Broken first. A list in declaration order buries the one row that matters.
+ *
+ * Generic so a caller that has already narrowed its items — to the ones with a
+ * fix, say — does not lose that narrowing by sorting them.
+ */
+const worstFirst = <T extends { readonly health: Health }>(items: readonly T[]): T[] =>
+  [...items].sort((a, b) => RANK[a.health] - RANK[b.health]);
 
 /** Copy-to-clipboard with its own confirmation, so nothing else has to track it. */
-function CopyFix({ fix, subtle }: { fix: Fix; subtle?: boolean }): JSX.Element {
+function CopyFix({ fix, solid }: { fix: Fix; solid?: boolean }): JSX.Element {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -80,12 +81,12 @@ function CopyFix({ fix, subtle }: { fix: Fix; subtle?: boolean }): JSX.Element {
       }}
       title={`Copy: ${fix.command}`}
       className={cn(
-        "flex h-7 shrink-0 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors",
+        "flex h-6 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
         copied
           ? "bg-success-tint text-success-text"
-          : subtle
-            ? "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong"
-            : "liq-solid liq-solid-brand",
+          : solid
+            ? "liq-solid liq-solid-brand"
+            : "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong",
       )}
     >
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
@@ -94,38 +95,46 @@ function CopyFix({ fix, subtle }: { fix: Fix; subtle?: boolean }): JSX.Element {
   );
 }
 
+/**
+ * One line, 36px, and nothing on the right when the row is fine.
+ *
+ * A column of identical "Ready"s trains the eye to skip that column, which is
+ * exactly the column that has to be read the day one of them changes.
+ */
 function Row({ item }: { item: Item }): JSX.Element {
   return (
-    <div className="border-hairline hover:bg-elevated flex items-center gap-3 border-b px-3.5 py-2.5 transition-colors last:border-b-0">
-      <span className="bg-base shadow-ring grid size-7 shrink-0 place-items-center rounded-md">
-        <Mark id={item.id} className={cn("size-4", item.health === "off" && "opacity-40")} />
+    <div
+      title={item.role}
+      className="hover:bg-elevated flex h-9 items-center gap-2.5 px-3.5 transition-colors"
+    >
+      <Mark id={item.id} className={cn("size-4", item.health === "off" && "opacity-35 grayscale")} />
+      <span className="text-ink-strong w-28 shrink-0 truncate text-sm font-medium">{label(item.id)}</span>
+      <span className={cn("text-ink-subtle min-w-0 flex-1 truncate text-xs", item.fix !== null && "font-mono")}>
+        {item.detail}
       </span>
-
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="text-ink-strong truncate font-medium">{label(item.id)}</span>
-          <span className="text-ink-subtle truncate text-xs">{item.role}</span>
-        </span>
-        <span className={cn("text-ink-subtle block truncate text-xs", item.fix !== null && "font-mono")}>
-          {item.detail}
-        </span>
-      </span>
-
-      {item.fix === null ? (
-        <span
-          className={cn(
-            "shrink-0 text-xs",
-            item.health === "ok" ? "text-success-text" : "text-ink-subtle",
-          )}
-        >
-          {item.state}
-        </span>
-      ) : (
-        <CopyFix fix={item.fix} subtle />
-      )}
+      {item.fix !== null ? (
+        <CopyFix fix={item.fix} />
+      ) : item.state !== "" ? (
+        <span className="text-ink-subtle shrink-0 text-xs">{item.state}</span>
+      ) : null}
     </div>
   );
 }
+
+function Caption({ children }: { children: React.ReactNode }): JSX.Element {
+  return <p className="text-ink-subtle px-3.5 pb-1 pt-3 text-[11px] uppercase tracking-wide">{children}</p>;
+}
+
+/**
+ * ffprobe ships inside FFmpeg and is never installed on its own, so two rows
+ * for it are two rows that always say the same thing — except when they do not,
+ * and that is the case the merged row has to keep. It takes the worse of the two.
+ */
+const mergeFfmpeg = (deps: readonly BinaryStatus[]): BinaryStatus | null => {
+  const parts = deps.filter((d) => d.id === "ffmpeg" || d.id === "ffprobe");
+  const broken = parts.find((d) => !d.found || d.stale !== null);
+  return broken ?? parts[0] ?? null;
+};
 
 const fromBinary = (dep: BinaryStatus): Item => {
   const base = { id: dep.id, name: label(dep.id), role: ROLES[dep.id] ?? dep.why };
@@ -142,12 +151,12 @@ const fromBinary = (dep: BinaryStatus): Item => {
     return { ...base, detail: dep.fix?.command ?? dep.stale, health: "warn", state: "Out of date", fix: dep.fix };
   }
   return {
+    // "9.0.1 · homebrew" says which copy answered, which is the whole question
+    // when two are installed.
     ...base,
-    // Version and origin: "8.0 · homebrew" tells a user which copy answered,
-    // which is the whole question when two are installed.
     detail: `${dep.version ?? "installed"}${dep.origin === null ? "" : ` · ${dep.origin}`}`,
     health: "ok",
-    state: "Ready",
+    state: "",
     fix: null,
   };
 };
@@ -159,68 +168,41 @@ const fromBackend = (backend: BackendStatus): Item => {
         ...base,
         detail: `${backend.version ?? "connected"}${backend.images === "none" ? " · text only" : ""}`,
         health: "ok",
-        state: "Connected",
+        state: "",
         fix: null,
       }
     : {
         ...base,
         detail: backend.fix?.command ?? backend.reason ?? "not available",
-        health: "off",
+        // Off is not broken: one connected model is all a run needs, and the
+        // strip only turns amber when the doctor itself raised something.
+        health: "warn",
         state: "Off",
         fix: backend.fix,
       };
 };
 
-const fromAsr = (probe: AsrProbe): Item => {
+/**
+ * A transcription link, carrying the fix for the tool it depends on.
+ *
+ * Whisper on this Mac is off because whisper-cli is missing or its model is
+ * not downloaded. The row that reports the loss is the row that should offer
+ * the cure, rather than sending someone hunting one group up.
+ */
+const fromAsr = (probe: AsrProbe, toolFix: Fix | null): Item => {
   const covers = [probe.forUrl ? "links" : null, probe.forFile ? "local files" : null].filter((k) => k !== null);
+  const health: Health = covers.length === 2 ? "ok" : covers.length === 1 ? "ok" : "warn";
   return {
     id: probe.name,
     name: label(probe.name),
     role: ROLES[probe.name] ?? "transcribes",
     detail: covers.length > 0 ? covers.join(" + ") : (probe.hint ?? "unavailable"),
-    health: covers.length === 2 ? "ok" : covers.length === 1 ? "warn" : "off",
-    state: covers.length === 0 ? "Off" : covers.length === 1 ? "Partial" : "Ready",
-    // No button: a transcription link is turned on by installing one of the
-    // tools above, never by itself, and two buttons for one action is a lie.
-    fix: null,
+    health,
+    state: covers.length === 0 ? "Off" : "",
+    fix: covers.length === 0 ? toolFix : null,
   };
 };
 
-/**
- * Broken first. A list in declaration order buries the one row that matters.
- *
- * Generic so a caller that has already narrowed its items — to the ones with a
- * fix, say — does not lose that narrowing by sorting them.
- */
-const worstFirst = <T extends { readonly health: Health }>(items: readonly T[]): T[] => {
-  const rank: Record<Health, number> = { off: 0, warn: 1, ok: 2 };
-  return [...items].sort((a, b) => rank[a.health] - rank[b.health]);
-};
-
-function Group({ title, items }: { title: string; items: readonly Item[] }): JSX.Element | null {
-  if (items.length === 0) return null;
-  return (
-    <>
-      <p className="text-ink-subtle bg-recessed border-hairline border-b px-3.5 py-1 text-[11px] uppercase tracking-wide">
-        {title}
-      </p>
-      {worstFirst(items).map((item) => (
-        <Row key={item.id} item={item} />
-      ))}
-    </>
-  );
-}
-
-/**
- * Whether this machine can run an extraction, in one line.
- *
- * It replaces a row of counters that repeated what the lists below already
- * said. Collapsed is the normal state on purpose: when everything works there
- * is nothing to decide, and a permanent wall of green rows trains people to
- * stop reading it — which is exactly when it needs to be read. It opens only
- * when someone asks, or carries the single blocking fix inline when it cannot
- * wait.
- */
 export function SystemPanel({
   report,
   onRecheck,
@@ -241,61 +223,65 @@ export function SystemPanel({
     );
   }
 
-  const tools = report.dependencies.map(fromBinary);
-  const backends = report.backends.map(fromBackend);
-  const asr = report.asr.map(fromAsr);
-  const all = [...tools, ...backends, ...asr];
+  const ffmpeg = mergeFfmpeg(report.dependencies);
+  const media = [
+    ...(ffmpeg === null ? [] : [fromBinary(ffmpeg)]),
+    ...report.dependencies.filter((d) => d.id === "yt-dlp").map(fromBinary),
+  ];
+  const models = report.backends.map(fromBackend);
+  // whisper-cli has no row of its own: the transcription link that needs it
+  // reports the loss, so it carries the cure.
+  const whisperFix = report.dependencies.find((d) => d.id === "whisper-cli")?.fix ?? null;
+  const transcription = report.asr.map((probe) => fromAsr(probe, whisperFix));
+
+  const all = [...media, ...models, ...transcription];
   const connected = all.filter((i) => i.health === "ok").length;
 
-  // The one thing worth acting on, if there is one: a blocking tool before a
-  // stale one, because the first stops the run and the second only degrades it.
-  const actionable = all.filter((i): i is Item & { readonly fix: Fix } => i.fix !== null);
-  const top = worstFirst(actionable)[0] ?? null;
-  const health: Health = !report.ok ? "off" : all.some((i) => i.health !== "ok") ? "warn" : "ok";
+  // The strip follows the doctor's own verdict. Deriving it from the rows made
+  // an optional backend sitting idle turn the whole thing amber, which said
+  // "something is wrong" about a machine that was completely fine.
+  const health: Health = !report.ok ? "off" : report.warnings.length > 0 ? "warn" : "ok";
+
+  const blocking = worstFirst(all.filter((i): i is Item & { readonly fix: Fix } => i.fix !== null && i.health === "off"))[0] ?? null;
 
   const headline = !report.ok ? "Not ready" : "Ready to extract";
-  const because =
-    top !== null
-      ? `${label(top.id)} · ${top.state.toLowerCase()}`
-      : health === "ok"
-        ? "everything is connected"
-        : "working with what is installed";
+  const because = !report.ok
+    ? (report.problems[0] ?? "something is missing")
+    : health === "warn"
+      ? (report.warnings[0] ?? "")
+      : `${connected} connected`;
 
   return (
     <div className="bg-base shadow-ring overflow-hidden rounded-lg">
-      <div className="flex h-12 items-center gap-3 px-3.5">
+      <div className="flex h-11 items-center gap-3 px-3.5">
         <button
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
           <span className={cn("size-2 shrink-0 rounded-full", DOT[health])} aria-hidden />
-          <span className="min-w-0">
-            <span className="text-ink-strong mr-2 font-medium">{headline}</span>
-            <span className="text-ink-subtle text-xs">{because}</span>
-          </span>
+          <span className="text-ink-strong shrink-0 text-sm font-medium">{headline}</span>
+          <span className="text-ink-subtle min-w-0 truncate text-xs">{because}</span>
 
-          {/* The stack is the glance: five marks at full strength say more, and
-              faster, than "5 of 7 connected" ever does. */}
-          <span className="ml-1 flex shrink-0 -space-x-1.5">
+          {/* The marks are the glance: recognising five logos is faster than
+              reading "5 connected", and the dimmed ones say which is asleep. */}
+          <span className="ml-auto flex shrink-0 items-center gap-1 pl-3">
             {all
-              .filter((item, i) => all.findIndex((o) => markFamily(o.id) === markFamily(item.id)) === i)
+              // One mark per brand, and no generic glyph: a placeholder shape in
+              // a row of real logos reads as a mark that failed to load.
+              .filter((item) => markFamily(item.id) !== "other")
+              .filter((item, i, kept) => kept.findIndex((o) => markFamily(o.id) === markFamily(item.id)) === i)
               .map((item) => (
-                <span
+                <Mark
                   key={item.id}
-                  title={`${label(item.id)} — ${item.state.toLowerCase()}`}
-                  className={cn(
-                    "bg-base ring-hairline grid size-6 place-items-center rounded-full ring-1",
-                    item.health !== "ok" && "opacity-35 grayscale",
-                  )}
-                >
-                  <Mark id={item.id} className="size-3.5" />
-                </span>
+                  id={item.id}
+                  className={cn("size-4", item.health !== "ok" && "opacity-25 grayscale")}
+                />
               ))}
           </span>
         </button>
 
-        {top !== null && !open && <CopyFix fix={top.fix} />}
+        {blocking !== null && !open && <CopyFix fix={blocking.fix} solid />}
 
         <button
           onClick={onRecheck}
@@ -305,7 +291,6 @@ export function SystemPanel({
         >
           <RefreshCw className={cn("size-3.5", checking && "animate-spin")} />
         </button>
-
         <button
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? "Hide details" : "Show details"}
@@ -324,15 +309,27 @@ export function SystemPanel({
             transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
             className="overflow-hidden"
           >
-            <div className="border-hairline border-t">
-              <Group title="Tools" items={tools} />
-              <Group title="Models" items={backends} />
-              <Group title="Transcription" items={asr} />
+            <div className="border-hairline border-t pb-2">
+              <Caption>Media</Caption>
+              {worstFirst(media).map((item) => (
+                <Row key={item.id} item={item} />
+              ))}
+
+              <Caption>Transcription</Caption>
+              {worstFirst(transcription).map((item) => (
+                <Row key={item.id} item={item} />
+              ))}
+
+              <Caption>Models</Caption>
+              {worstFirst(models).map((item) => (
+                <Row key={item.id} item={item} />
+              ))}
+
+              <p className="text-ink-subtle mt-2 px-3.5 text-[11px]">
+                Each check runs the tool and reads its version. That proves it starts, not that a given
+                video will download.
+              </p>
             </div>
-            <p className="border-hairline text-ink-subtle border-t px-3.5 py-2 text-[11px]">
-              Each check runs the binary and reads its version. It proves the tool starts, not that a
-              particular video will download.
-            </p>
           </motion.div>
         )}
       </AnimatePresence>
