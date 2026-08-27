@@ -18,6 +18,7 @@ export const claudeSpec: HarnessSpec = {
   // rejects a file path with "not valid JSON: Unrecognized token '/'".
   schemaMode: "inline",
   versionArgs: ["--version"],
+  install: "npm i -g @anthropic-ai/claude-code",
 
   buildArgs: ({ schemaInline, tuning }) => [
     "--print",

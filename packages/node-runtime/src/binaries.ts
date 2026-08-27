@@ -93,6 +93,7 @@ export const makeBinaryProbe =
         required: spec.required,
         why: spec.why,
         stale: null,
+        fix: { label: "Install", command: spec.install },
       };
     }
     // A binary that resolves but cannot run is a missing binary as far as the
@@ -110,6 +111,9 @@ export const makeBinaryProbe =
     // Only yt-dlp goes stale in a way that matters: its version IS a date, and
     // the platforms it reads change under it. ffmpeg from last year is fine.
     const age = spec.id === "yt-dlp" ? versionAgeDays(version) : null;
+    // A stale binary is upgraded, not installed, and the command differs by
+    // where it came from. The probe is the only place that knows which.
+    const stale = age !== null && age > STALE_AFTER_DAYS;
     return {
       id: spec.id,
       found: true,
@@ -118,9 +122,12 @@ export const makeBinaryProbe =
       version,
       required: spec.required,
       why: spec.why,
-      stale:
-        age !== null && age > STALE_AFTER_DAYS
-          ? `${age} days old — platforms change and old builds stop being able to download`
-          : null,
+      stale: stale ? `${age} days old — platforms change and old builds stop being able to download` : null,
+      fix: stale
+        ? {
+            label: "Update",
+            command: resolved.origin === "homebrew" ? `brew upgrade ${spec.id}` : `${spec.id} -U`,
+          }
+        : null,
     };
   };

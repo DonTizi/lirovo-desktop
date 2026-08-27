@@ -1,3 +1,5 @@
+import type { Fix } from "@lirovo/contracts";
+
 /**
  * The external binaries the pipeline shells out to.
  *
@@ -10,13 +12,40 @@ export interface DependencySpec {
   readonly why: string;
   /** Argument that makes the binary print its version and exit 0. */
   readonly versionArgs: readonly string[];
+  /** What a user runs to get it. Homebrew because that is what macOS has. */
+  readonly install: string;
 }
 
 export const DEPENDENCIES: readonly DependencySpec[] = [
-  { id: "ffmpeg", required: true, why: "normalize audio and extract frames", versionArgs: ["-version"] },
-  { id: "ffprobe", required: true, why: "read duration and stream layout", versionArgs: ["-version"] },
-  { id: "yt-dlp", required: false, why: "download from a URL and fetch subtitles", versionArgs: ["--version"] },
-  { id: "whisper-cli", required: false, why: "transcribe locally when there are no subtitles", versionArgs: ["--help"] },
+  {
+    id: "ffmpeg",
+    required: true,
+    why: "normalize audio and extract frames",
+    versionArgs: ["-version"],
+    install: "brew install ffmpeg",
+  },
+  {
+    id: "ffprobe",
+    required: true,
+    why: "read duration and stream layout",
+    versionArgs: ["-version"],
+    // Same formula as ffmpeg: they ship together and are never installed apart.
+    install: "brew install ffmpeg",
+  },
+  {
+    id: "yt-dlp",
+    required: false,
+    why: "download from a URL and fetch subtitles",
+    versionArgs: ["--version"],
+    install: "brew install yt-dlp",
+  },
+  {
+    id: "whisper-cli",
+    required: false,
+    why: "transcribe locally when there are no subtitles",
+    versionArgs: ["--help"],
+    install: "brew install whisper-cpp",
+  },
 ];
 
 export interface BinaryStatus {
@@ -30,4 +59,6 @@ export interface BinaryStatus {
   readonly why: string;
   /** Present when the binary works but is old enough to have stopped working. */
   readonly stale: string | null;
+  /** What to do about it, when there is something to do. */
+  readonly fix: Fix | null;
 }

@@ -48,6 +48,10 @@ export const buildBackends = (deps: BackendRegistryDeps): readonly InferenceBack
     baseUrl: env["LIROVO_OPENAI_BASE_URL"] ?? DEFAULT_LOCAL_BASE_URL,
     model: env["LIROVO_MODEL"] ?? DEFAULT_LOCAL_MODEL,
     ...(apiKey !== undefined ? { apiKey } : {}),
+    // Named for the default port. A user pointing LIROVO_OPENAI_BASE_URL at LM
+    // Studio gets a wrong instruction here, which is why it is a suggestion
+    // next to the real reason rather than the reason itself.
+    setup: { label: "Start", command: `ollama serve && ollama pull ${env["LIROVO_MODEL"] ?? DEFAULT_LOCAL_MODEL}` },
   });
 
   return [local, createCodexBackend(harnessDeps), createClaudeBackend(harnessDeps)];

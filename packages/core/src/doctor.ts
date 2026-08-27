@@ -1,4 +1,4 @@
-import type { InferenceBackend } from "@lirovo/contracts";
+import type { Fix, InferenceBackend } from "@lirovo/contracts";
 import type { BinaryStatus, DependencySpec } from "./dependencies.js";
 import type { LirovoPaths } from "./paths.js";
 
@@ -7,6 +7,8 @@ export interface BackendStatus {
   readonly available: boolean;
   readonly version: string | null;
   readonly reason: string | null;
+  /** Set only while it is off: a running backend has nothing to fix. */
+  readonly fix: Fix | null;
   readonly nativeJsonSchema: boolean;
   readonly images: "inline" | "files" | "none";
   readonly spawnsProcessPerCall: boolean;
@@ -58,6 +60,7 @@ const describeBackend = async (backend: InferenceBackend): Promise<BackendStatus
     available: probe.available,
     version: probe.version,
     reason: "reason" in probe ? (probe.reason ?? null) : null,
+    fix: probe.available ? null : backend.setup,
     nativeJsonSchema: backend.capabilities.nativeJsonSchema,
     images: backend.capabilities.images,
     spawnsProcessPerCall: backend.capabilities.spawnsProcessPerCall,

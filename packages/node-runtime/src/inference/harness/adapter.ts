@@ -42,6 +42,8 @@ export interface HarnessSpec {
   readonly schemaMode: SchemaMode;
   /** Args that print a version and exit 0. */
   readonly versionArgs: readonly string[];
+  /** What a user runs to get this CLI. */
+  readonly install: string;
   /** Build the invocation for this call. */
   buildArgs(ctx: {
     schemaPath: string | null;
@@ -91,6 +93,7 @@ export const createHarnessBackend = (spec: HarnessSpec, deps: HarnessDeps): Infe
 
   return {
     id: spec.id,
+    setup: { label: "Install", command: spec.install },
     capabilities: { ...HARNESS_CAPABILITIES, nativeJsonSchema: spec.schemaMode !== "prompt" },
 
     async detect() {

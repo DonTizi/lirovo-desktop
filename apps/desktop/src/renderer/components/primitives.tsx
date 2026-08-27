@@ -50,32 +50,6 @@ export function Badge({
   );
 }
 
-/**
- * Quiet label, oversized neutral figure, nothing else.
- *
- * Figures stay neutral on purpose: state is carried by badges, never by
- * colouring the number, so a row of tiles does not turn into a traffic light.
- */
-export function StatTile({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  // Optional AND explicitly undefinable: a caller computing a hint
-  // conditionally passes `undefined`, which the narrow spelling rejects.
-  hint?: string | undefined;
-}): JSX.Element {
-  return (
-    <div className="bg-base shadow-ring rounded-lg px-4 py-3">
-      <p className="text-ink-label">{label}</p>
-      <p className="text-ink-strong mt-1 text-2xl font-semibold tabular-nums">{value}</p>
-      {hint !== undefined ? <p className="text-ink-subtle mt-0.5 text-xs">{hint}</p> : null}
-    </div>
-  );
-}
-
 /** A state the way an account home prints one: quiet uppercase, never tinted. */
 export function StateLabel({ children }: { children: React.ReactNode }): JSX.Element {
   return <span className="text-ink-subtle whitespace-nowrap text-xs uppercase">{children}</span>;

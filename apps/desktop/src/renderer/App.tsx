@@ -6,10 +6,11 @@ import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
-import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
+import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
 import { SchemaPicker } from "./components/SchemaPicker";
 import { SchemasPage } from "./components/SchemasPage";
+import { SystemPanel, type SystemReport } from "./components/SystemPanel";
 import { cn } from "./lib/cn";
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -125,7 +126,10 @@ export const App = (): JSX.Element => {
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [open, setOpen] = useState<Map<string, RunDetail>>(new Map());
-  const [ready, setReady] = useState<{ ok: boolean; note: string; dataDir: string | null } | null>(null);
+  const [system, setSystem] = useState<SystemReport | null>(null);
+  const [dataDir, setDataDir] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
   const { stages, reset, apply } = useStages();
   const video = useRef<HTMLVideoElement>(null);
 
@@ -139,27 +143,24 @@ export const App = (): JSX.Element => {
   // Asking the engine what this machine can do is also the first proof that the
   // engine process started and that the bridge works. If either is wrong the
   // user learns it here, not after picking a two-hour video.
+  const check = useCallback(async () => {
+    setChecking(true);
+    const answer = await window.lirovo.doctor();
+    setChecking(false);
+    if (!answer.ok) {
+      setBridgeError(`${answer.error.code}: ${answer.error.message}`);
+      return;
+    }
+    const report = answer.value as SystemReport & { paths: { data: string } };
+    setBridgeError(null);
+    setSystem(report);
+    setDataDir(report.paths.data);
+  }, []);
+
   useEffect(() => {
-    void window.lirovo.doctor().then((answer) => {
-      if (!answer.ok) {
-        setReady({ ok: false, note: `${answer.error.code}: ${answer.error.message}`, dataDir: null });
-        return;
-      }
-      const report = answer.value as {
-        ok: boolean;
-        problems: string[];
-        paths: { data: string };
-        backends: { id: string; available: boolean }[];
-      };
-      const usable = report.backends.filter((b) => b.available).map((b) => b.id);
-      setReady({
-        ok: report.ok,
-        note: report.ok ? (usable.length === 0 ? "no backend" : usable.join(", ")) : (report.problems[0] ?? "not ready"),
-        dataDir: report.paths.data,
-      });
-    });
+    void check();
     void loadRuns();
-  }, [loadRuns]);
+  }, [check, loadRuns]);
 
   const start = async (): Promise<void> => {
     if (source.trim() === "") return;
@@ -222,9 +223,6 @@ export const App = (): JSX.Element => {
     );
   }, [detail, query]);
   const grounded = values.filter((v) => v.evidence.length > 0).length;
-
-  const succeeded = runs.filter((r) => r.status === "succeeded").length;
-  const totalValues = runs.reduce((n, r) => n + r.valueCount, 0);
 
   const runEntries: ListEntry[] = runs.map((r) => ({
     id: r.runId,
@@ -290,15 +288,20 @@ export const App = (): JSX.Element => {
           })
         }
         onOpenSettings={() => setTab("overview")}
-        dataDir={ready?.dataDir ?? null}
+        dataDir={dataDir}
       />
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl px-6 py-10">
           {tab === "overview" && (
             <>
-              {ready !== null && !ready.ok && (
-                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">{ready.note}</p>
+              {/* The blocking reason belongs ABOVE the field, not only in the
+                  panel below: a user who drops a two-hour video and learns
+                  afterwards that ffmpeg is missing has already spent the wait. */}
+              {(bridgeError ?? (system !== null && !system.ok ? (system.problems[0] ?? null) : null)) !== null && (
+                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">
+                  {bridgeError ?? system?.problems[0]}
+                </p>
               )}
 
               <h1 className="text-ink-strong text-center text-4xl font-semibold tracking-tight">Lirovo</h1>
@@ -374,15 +377,8 @@ export const App = (): JSX.Element => {
                 />
               </div>
 
-              <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <StatTile label="Runs" value={String(runs.length)} />
-                <StatTile
-                  label="Succeeded"
-                  value={String(succeeded)}
-                  hint={runs.length > 0 ? `${Math.round((succeeded / runs.length) * 100)} % of runs` : undefined}
-                />
-                <StatTile label="Values" value={String(totalValues)} />
-                <StatTile label="Backends" value={ready?.note ?? "…"} hint="detected on this machine" />
+              <div className="mt-8">
+                <SystemPanel report={system} onRecheck={() => void check()} checking={checking} />
               </div>
 
               <div className="mt-10 grid gap-8 lg:grid-cols-3">
