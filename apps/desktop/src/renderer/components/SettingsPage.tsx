@@ -18,10 +18,11 @@ import type { Preferences, StorageReport, UpdateState } from "../../main/ipc.js"
 import { Hero } from "./hero";
 import { Mark } from "./logos";
 import { Skeleton } from "./primitives";
-import type { SystemReport } from "./SystemPanel";
-import { cn } from "../lib/cn";
 
-type Health = "ok" | "warn" | "off";
+import { cn } from "../lib/cn";
+import { useCopied } from "../lib/use-copied";
+import { InstallButton } from "./system/install-button";
+import { DOT, FETCHABLE, RANK, label, roleOf, type Health, type SystemReport } from "../lib/system-vocabulary";
 
 interface Entry {
   readonly id: string;
@@ -40,35 +41,6 @@ interface Entry {
   readonly path: string | null;
 }
 
-const NAMES: Record<string, string> = {
-  ffmpeg: "FFmpeg",
-  ffprobe: "FFprobe",
-  "yt-dlp": "yt-dlp",
-  "whisper-cli": "Whisper",
-  local: "Ollama",
-  codex: "Codex",
-  claude: "Claude Code",
-  captions: "Published subtitles",
-  "whisper-cpp": "Whisper on this Mac",
-  "whisper-api": "Whisper API",
-};
-
-const ROLES: Record<string, string> = {
-  ffmpeg: "cuts frames and audio",
-  ffprobe: "reads duration and streams",
-  "yt-dlp": "downloads links and subtitles",
-  "whisper-cli": "runs the speech model",
-  local: "runs a model on this Mac",
-  codex: "reads frames, builds the graph",
-  claude: "reads frames, builds the graph",
-  captions: "a free transcript when the platform has one",
-  "whisper-cpp": "transcription on this Mac, no network",
-  "whisper-api": "transcription off the machine",
-};
-
-const label = (id: string): string => NAMES[id] ?? id;
-const DOT: Record<Health, string> = { ok: "bg-success", warn: "bg-warning", off: "bg-danger" };
-
 const bytes = (n: number): string => {
   if (n < 1024) return `${n} B`;
   if (n < 1_048_576) return `${(n / 1024).toFixed(0)} KB`;
@@ -76,17 +48,12 @@ const bytes = (n: number): string => {
   return `${(n / 1_073_741_824).toFixed(1)} GB`;
 };
 
-const FETCHABLE: Record<string, "whisper-model" | "yt-dlp"> = {
-  "yt-dlp": "yt-dlp",
-  "whisper-cpp": "whisper-model",
-};
-
 /** Everything the doctor found, as one flat inventory the table can group. */
 const toEntries = (report: SystemReport): Entry[] => {
   const out: Entry[] = [];
 
   for (const dep of report.dependencies) {
-    const base = { id: dep.id, group: "Media", name: label(dep.id), role: ROLES[dep.id] ?? dep.why, path: dep.path };
+    const base = { id: dep.id, group: "Media", name: label(dep.id), role: roleOf(dep.id, dep.why), path: dep.path };
     if (!dep.found) {
       out.push({
         ...base,
@@ -119,7 +86,7 @@ const toEntries = (report: SystemReport): Entry[] => {
       id: backend.id,
       group: "Models",
       name: label(backend.id),
-      role: ROLES[backend.id] ?? "runs the model",
+      role: roleOf(backend.id, "runs the model"),
       detail: backend.available
         ? `${backend.version ?? "connected"}${backend.images === "none" ? " · text only" : ""}`
         : (backend.fix?.command ?? backend.reason ?? "not available"),
@@ -139,7 +106,7 @@ const toEntries = (report: SystemReport): Entry[] => {
       id: probe.name,
       group: "Transcription",
       name: label(probe.name),
-      role: ROLES[probe.name] ?? "transcribes",
+      role: roleOf(probe.name, "transcribes"),
       detail: covers.length > 0 ? covers.join(" + ") : (probe.hint ?? "unavailable"),
       health: covers.length > 0 ? "ok" : "warn",
       state: covers.length === 0 ? "Off" : covers.length === 1 ? "Partial" : "Ready",
@@ -155,68 +122,17 @@ const toEntries = (report: SystemReport): Entry[] => {
 };
 
 const GROUPS = ["Media", "Transcription", "Models"] as const;
-const RANK: Record<Health, number> = { off: 0, warn: 1, ok: 2 };
 
 /** Copy-to-clipboard with its own confirmation. */
 function CopyCommand({ fix }: { fix: Fix }): JSX.Element {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopied();
   return (
     <button
-      onClick={() => {
-        void navigator.clipboard.writeText(fix.command).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 2000);
-        });
-      }}
+      onClick={() => copy(fix.command)}
       className="hover:bg-elevated flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px]"
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
       {copied ? "Copied" : `Copy “${fix.label.toLowerCase()}” command`}
-    </button>
-  );
-}
-
-function InstallButton({ what, onDone }: { what: "whisper-model" | "yt-dlp"; onDone: () => void }): JSX.Element {
-  const [working, setWorking] = useState(false);
-  const [pct, setPct] = useState<number | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-
-  useEffect(
-    () =>
-      window.lirovo.onInstallProgress((p) => {
-        if (p.what !== what || p.total === null) return;
-        setPct(Math.min(100, Math.round((p.received / p.total) * 100)));
-      }),
-    [what],
-  );
-
-  if (failed !== null) {
-    return (
-      <span className="text-danger-text text-xs" title={failed}>
-        {failed.slice(0, 36)}
-      </span>
-    );
-  }
-
-  return (
-    <button
-      disabled={working}
-      onClick={() => {
-        setWorking(true);
-        setPct(0);
-        void window.lirovo.install(what).then((answer) => {
-          setWorking(false);
-          if (answer.ok) onDone();
-          else setFailed(answer.error.message);
-        });
-      }}
-      className={cn(
-        "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium",
-        working ? "bg-tint text-ink-label" : "liq-solid liq-solid-brand",
-      )}
-    >
-      {working ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
-      {working ? (pct === null ? "downloading" : `${pct}%`) : "Install"}
     </button>
   );
 }
