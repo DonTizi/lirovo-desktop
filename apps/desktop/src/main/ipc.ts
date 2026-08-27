@@ -17,6 +17,20 @@ export type ExtractRequest = z.infer<typeof extractRequestSchema>;
 
 export const runIdSchema = z.object({ runId: z.string().min(1) });
 
+/** Look at a source without ingesting it, so the field can say what it understood. */
+export const inspectRequestSchema = z.object({ source: z.string().min(1) });
+
+export interface SourceInspection {
+  readonly kind: "url" | "file";
+  /** youtube | vimeo | loom | url, or the file extension. */
+  readonly label: string;
+  readonly title: string | null;
+  readonly durationS: number | null;
+  readonly bytes: number | null;
+  /** Why it cannot be used, if it cannot. */
+  readonly problem: string | null;
+}
+
 /** What the engine process sends back. Same union the CLI renders. */
 export const engineMessageSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("event"), event: pipelineEventSchema }),
@@ -36,6 +50,7 @@ export const CHANNELS = {
   runDetail: "lirovo:run-detail",
   listRuns: "lirovo:list-runs",
   pickFile: "lirovo:pick-file",
+  inspect: "lirovo:inspect",
   engineEvent: "lirovo:engine-event",
 } as const;
 

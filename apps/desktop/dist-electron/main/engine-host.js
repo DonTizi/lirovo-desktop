@@ -10088,6 +10088,59 @@ const runDetail = (runId) => withDb((db) => {
     values: rows.map((row) => ({ ...row, evidence: evidence.all(row.observationId) }))
   };
 });
+const inspect = async (source) => {
+  const { stat: stat2 } = await import("node:fs/promises");
+  const path2 = await import("node:path");
+  if (isUrl(source)) {
+    const label = sourceTypeOf(source);
+    const ytDlp = await resolveBinary("yt-dlp", paths);
+    if (ytDlp === null) {
+      return { kind: "url", label, title: null, durationS: null, bytes: null, problem: "yt-dlp is not installed" };
+    }
+    try {
+      const { stdout } = await realExec(
+        ytDlp.path,
+        ["--skip-download", "--no-playlist", "--no-warnings", "--no-update", "--print", "%(title)s|%(duration)s", source],
+        { timeoutMs: 2e4 }
+      );
+      const [title = "", duration = ""] = (stdout.trim().split("\n").pop() ?? "").split("|");
+      const seconds = Number(duration);
+      return {
+        kind: "url",
+        label,
+        title: title === "" || title === "NA" ? null : title,
+        durationS: Number.isFinite(seconds) && seconds > 0 ? seconds : null,
+        bytes: null,
+        problem: null
+      };
+    } catch (error) {
+      return {
+        kind: "url",
+        label,
+        title: null,
+        durationS: null,
+        bytes: null,
+        problem: error instanceof Error ? error.message.split("\n")[0] ?? "unreachable" : "unreachable"
+      };
+    }
+  }
+  const resolved = path2.resolve(source);
+  const ffprobe = await resolveBinary("ffprobe", paths);
+  try {
+    const info = await stat2(resolved);
+    const probe = ffprobe === null ? null : await probeMedia(realExec, ffprobe.path, resolved).catch(() => null);
+    return {
+      kind: "file",
+      label: (path2.extname(resolved).replace(".", "") || "file").toUpperCase(),
+      title: path2.basename(resolved),
+      durationS: (probe == null ? void 0 : probe.durationS) ?? null,
+      bytes: info.size,
+      problem: probe === null ? "this file is not readable media" : null
+    };
+  } catch {
+    return { kind: "file", label: "file", title: null, durationS: null, bytes: null, problem: "no such file" };
+  }
+};
 const doctor = async () => {
   const probe = makeBinaryProbe(paths, realExec);
   return runDoctor({
@@ -10181,6 +10234,8 @@ const handle = async (message) => {
       return listRuns();
     case "runDetail":
       return runDetail(message.runId);
+    case "inspect":
+      return inspect(message.source);
   }
 };
 process.parentPort.on("message", (wrapper) => {

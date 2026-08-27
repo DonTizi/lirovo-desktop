@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
-import { CHANNELS, extractRequestSchema, runIdSchema } from "./ipc.js";
+import { CHANNELS, extractRequestSchema, inspectRequestSchema, runIdSchema } from "./ipc.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
@@ -128,6 +128,11 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.extract,
     guard((payload) => ask({ type: "extract", request: extractRequestSchema.parse(payload) })),
+  );
+
+  ipcMain.handle(
+    CHANNELS.inspect,
+    guard((payload) => ask({ type: "inspect", source: inspectRequestSchema.parse(payload).source })),
   );
 
   ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));

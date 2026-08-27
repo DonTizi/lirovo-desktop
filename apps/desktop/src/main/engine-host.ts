@@ -15,15 +15,19 @@ import {
   createFsArtifactStore,
   createRunStore,
   createStageLedger,
+  isUrl,
   makeAsrProbe,
   makeBinaryProbe,
   openDatabase,
   persistExtraction,
+  probeMedia,
   realExec,
+  resolveBinary,
   resolvePaths,
   selectBackend,
+  sourceTypeOf,
 } from "@lirovo/node-runtime";
-import type { ExtractRequest, RunDetail, RunSummary, ValueRow } from "./ipc.js";
+import type { ExtractRequest, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
 
 /**
  * The engine, in its own process.
@@ -41,7 +45,8 @@ type Inbound =
   | { id: string; type: "cancel" }
   | { id: string; type: "doctor" }
   | { id: string; type: "listRuns" }
-  | { id: string; type: "runDetail"; runId: string };
+  | { id: string; type: "runDetail"; runId: string }
+  | { id: string; type: "inspect"; source: string };
 
 type Outbound =
   | { kind: "event"; event: PipelineEvent }
@@ -114,6 +119,71 @@ const runDetail = (runId: string): RunDetail | null =>
       values: rows.map((row) => ({ ...row, evidence: evidence.all(row.observationId) as unknown as ValueRow["evidence"] })),
     };
   });
+
+/**
+ * Recognise a source without downloading or transcoding it.
+ *
+ * Two speeds on purpose. A local file is probed straight away — ffprobe reads a
+ * header in milliseconds. A URL is classified from its hostname instantly and
+ * its title fetched after, because that costs a network round trip and the
+ * field should acknowledge the paste immediately rather than sit blank for five
+ * seconds looking broken.
+ */
+const inspect = async (source: string): Promise<SourceInspection> => {
+  const { stat } = await import("node:fs/promises");
+  const path = await import("node:path");
+
+  if (isUrl(source)) {
+    const label = sourceTypeOf(source);
+    const ytDlp = await resolveBinary("yt-dlp", paths);
+    if (ytDlp === null) {
+      return { kind: "url", label, title: null, durationS: null, bytes: null, problem: "yt-dlp is not installed" };
+    }
+    try {
+      const { stdout } = await realExec(
+        ytDlp.path,
+        ["--skip-download", "--no-playlist", "--no-warnings", "--no-update", "--print", "%(title)s|%(duration)s", source],
+        { timeoutMs: 20_000 },
+      );
+      const [title = "", duration = ""] = (stdout.trim().split("\n").pop() ?? "").split("|");
+      const seconds = Number(duration);
+      return {
+        kind: "url",
+        label,
+        title: title === "" || title === "NA" ? null : title,
+        durationS: Number.isFinite(seconds) && seconds > 0 ? seconds : null,
+        bytes: null,
+        problem: null,
+      };
+    } catch (error) {
+      return {
+        kind: "url",
+        label,
+        title: null,
+        durationS: null,
+        bytes: null,
+        problem: error instanceof Error ? error.message.split("\n")[0] ?? "unreachable" : "unreachable",
+      };
+    }
+  }
+
+  const resolved = path.resolve(source);
+  const ffprobe = await resolveBinary("ffprobe", paths);
+  try {
+    const info = await stat(resolved);
+    const probe = ffprobe === null ? null : await probeMedia(realExec, ffprobe.path, resolved).catch(() => null);
+    return {
+      kind: "file",
+      label: (path.extname(resolved).replace(".", "") || "file").toUpperCase(),
+      title: path.basename(resolved),
+      durationS: probe?.durationS ?? null,
+      bytes: info.size,
+      problem: probe === null ? "this file is not readable media" : null,
+    };
+  } catch {
+    return { kind: "file", label: "file", title: null, durationS: null, bytes: null, problem: "no such file" };
+  }
+};
 
 const doctor = async (): Promise<unknown> => {
   const probe = makeBinaryProbe(paths, realExec);
@@ -224,6 +294,8 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return listRuns();
     case "runDetail":
       return runDetail(message.runId);
+    case "inspect":
+      return inspect(message.source);
   }
 };
 

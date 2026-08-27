@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
 import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
 import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, StatTile, type ListEntry } from "./components/primitives";
-import { DropZone } from "./components/DropZone";
+import { SourceInput } from "./components/SourceInput";
 import { cn } from "./lib/cn";
 
 const DEFAULT_SCHEMA = `{
@@ -271,8 +272,6 @@ export const App = (): JSX.Element => {
         grounded={grounded}
         total={values.length}
         running={running}
-        canStart={source.trim() !== ""}
-        onStart={() => void start()}
         onCancel={() => void window.lirovo.cancel()}
         onRefresh={() => void loadRuns()}
       />
@@ -304,9 +303,11 @@ export const App = (): JSX.Element => {
               <h1 className="text-ink-strong text-center text-4xl font-semibold tracking-tight">Lirovo</h1>
 
               <div className="relative mx-auto mt-7 max-w-3xl">
-                <DropZone
+                <SourceInput
+                  value={source}
+                  onChange={setSource}
+                  onSubmit={() => void start()}
                   busy={running}
-                  onPath={setSource}
                   onBrowse={() => {
                     void window.lirovo.pickFile().then((picked) => {
                       if (picked.ok && picked.value !== null) setSource(picked.value);
@@ -314,15 +315,37 @@ export const App = (): JSX.Element => {
                   }}
                 />
 
-                <input
-                  className="border-line bg-surface-subtle text-ink placeholder:text-ink-tertiary focus:border-brand focus:bg-surface focus:ring-brand/20 mt-3 h-9 w-full rounded-lg border px-3 text-sm outline-none transition-colors focus:ring-2"
-                  placeholder="…or paste a URL, or a file path"
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                />
+                {/* The progress opens where the field is, not somewhere else on
+                    the page. Keeping the work in the place the user just acted
+                    is what makes it read as the same thing continuing rather
+                    than a second thing appearing. */}
+                <AnimatePresence>
+                  {(running || stages.size > 0) && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <Card className="mt-2">
+                        <CardHeader title="Progress" action={running ? "running" : "finished"} />
+                        <div>
+                          {STAGES.map((stage) => (
+                            <StageRow key={stage} stage={stage} state={stages.get(stage)} />
+                          ))}
+                        </div>
+                      </Card>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-                <details className="group mt-3">
-                  <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-xs uppercase tracking-wide transition-colors">
+                {error !== null && (
+                  <p className="border-hairline text-danger-text mt-3 border-t px-1 py-3 font-mono text-xs">{error}</p>
+                )}
+
+                <details className="group mt-4">
+                  <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-center text-xs uppercase tracking-wide transition-colors">
                     Schema — leave empty to transcribe only
                   </summary>
                   <textarea
@@ -344,21 +367,6 @@ export const App = (): JSX.Element => {
                 <StatTile label="Values" value={String(totalValues)} />
                 <StatTile label="Backends" value={ready?.note ?? "…"} hint="detected on this machine" />
               </div>
-
-              {(running || stages.size > 0) && (
-                <Card className="mt-8">
-                  <CardHeader title="Progress" action={running ? "running" : "finished"} />
-                  <div>
-                    {STAGES.map((stage) => (
-                      <StageRow key={stage} stage={stage} state={stages.get(stage)} />
-                    ))}
-                  </div>
-                </Card>
-              )}
-
-              {error !== null && (
-                <p className="border-hairline text-danger-text mt-8 border-t px-1 py-3 font-mono text-xs">{error}</p>
-              )}
 
               <div className="mt-10 grid gap-8 lg:grid-cols-3">
                 <ListColumn

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/ipc.js";
-import type { ExtractRequest, RunDetail, RunSummary } from "../main/ipc.js";
+import type { ExtractRequest, RunDetail, RunSummary, SourceInspection } from "../main/ipc.js";
 
 /**
  * Nothing throws across the bridge.
@@ -19,6 +19,7 @@ const api = {
   runDetail: (runId: string): Promise<Result<RunDetail | null>> => ipcRenderer.invoke(CHANNELS.runDetail, { runId }),
   extract: (request: ExtractRequest): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.extract, request),
   cancel: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.cancel),
+  inspect: (source: string): Promise<Result<SourceInspection>> => ipcRenderer.invoke(CHANNELS.inspect, { source }),
   pickFile: (): Promise<Result<string | null>> => ipcRenderer.invoke(CHANNELS.pickFile),
 
   /**

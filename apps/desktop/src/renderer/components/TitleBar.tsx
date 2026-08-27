@@ -18,8 +18,6 @@ export function TitleBar({
   grounded,
   total,
   running,
-  canStart,
-  onStart,
   onCancel,
   onRefresh,
 }: {
@@ -28,8 +26,6 @@ export function TitleBar({
   grounded: number;
   total: number;
   running: boolean;
-  canStart: boolean;
-  onStart: () => void;
   onCancel: () => void;
   onRefresh: () => void;
 }): JSX.Element {
@@ -75,21 +71,16 @@ export function TitleBar({
         >
           <RefreshCw size={15} className={running ? "animate-spin" : ""} />
         </button>
+        {/* Only Cancel lives up here now. Extract belongs to the field, and two
+            buttons doing one job leaves a person guessing which is the real one. */}
         {running ? (
           <button
-            className="text-ink-secondary hover:bg-surface-subtle rounded-md px-2.5 py-1.5 text-sm"
+            className="liq-solid h-9 rounded-lg px-4 text-sm font-medium"
             onClick={onCancel}
           >
             Cancel
           </button>
         ) : null}
-        <button
-          className="liq-solid liq-solid-brand h-9 min-w-[116px] rounded-lg px-4 text-sm font-medium"
-          onClick={onStart}
-          disabled={!canStart || running}
-        >
-          {running ? "Extracting…" : "Extract"}
-        </button>
       </div>
     </header>
   );

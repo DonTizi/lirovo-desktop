@@ -3891,6 +3891,7 @@ objectType({
   backendId: stringType().nullable()
 });
 objectType({ runId: stringType().min(1) });
+objectType({ source: stringType().min(1) });
 discriminatedUnionType("kind", [
   objectType({ kind: literalType("event"), event: pipelineEventSchema }),
   objectType({ kind: literalType("done"), runId: stringType(), summary: unknownType() }),
@@ -3907,6 +3908,7 @@ const CHANNELS = {
   runDetail: "lirovo:run-detail",
   listRuns: "lirovo:list-runs",
   pickFile: "lirovo:pick-file",
+  inspect: "lirovo:inspect",
   engineEvent: "lirovo:engine-event"
 };
 const api = {
@@ -3915,6 +3917,7 @@ const api = {
   runDetail: (runId) => ipcRenderer.invoke(CHANNELS.runDetail, { runId }),
   extract: (request) => ipcRenderer.invoke(CHANNELS.extract, request),
   cancel: () => ipcRenderer.invoke(CHANNELS.cancel),
+  inspect: (source) => ipcRenderer.invoke(CHANNELS.inspect, { source }),
   pickFile: () => ipcRenderer.invoke(CHANNELS.pickFile),
   /**
    * A dropped file gives the renderer a File object with no path. This is the
