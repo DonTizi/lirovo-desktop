@@ -100,9 +100,20 @@ const listRuns = (): RunSummary[] =>
       .prepare(
         `SELECT r.id AS runId, r.status, s.title, r.created_at AS createdAt,
                 r.lease_expires_at AS leaseExpiresAt,
-                (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount
-           FROM runs r JOIN sources s ON s.id = r.source_id
-          ORDER BY r.created_at DESC LIMIT 50`,
+                s.duration_s AS durationS, s.source_type AS sourceType,
+                sr.name AS schemaName,
+                (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount,
+                (SELECT COUNT(DISTINCT ve.observation_id)
+                   FROM extracted_values v2
+                   JOIN value_evidence ve ON ve.observation_id = v2.observation_id
+                  WHERE v2.run_id = r.id) AS groundedCount,
+                (SELECT COUNT(*) FROM artifacts a
+                  WHERE a.run_id = r.id AND a.rel_path LIKE 'frames/dedup/%') AS frameCount
+           FROM runs r
+           JOIN sources s ON s.id = r.source_id
+           LEFT JOIN schema_revisions rev ON rev.id = r.schema_revision_id
+           LEFT JOIN schemas sr ON sr.id = rev.schema_id
+          ORDER BY r.created_at DESC LIMIT 200`,
       )
       .all() as unknown as (RunSummary & { status: RunStatus; leaseExpiresAt: number | null })[];
     // Derived on read, never written: a row that says running an hour after its

@@ -50,6 +50,17 @@ export function Badge({
   );
 }
 
+/**
+ * A shape where content will be, at the size the content will be.
+ *
+ * Not a spinner: a spinner says "wait" and nothing else, while a block that
+ * matches the coming layout means the page does not jump when it arrives, and
+ * the reader can already tell what is loading.
+ */
+export function Skeleton({ className }: { className?: string }): JSX.Element {
+  return <div className={cn("bg-fill animate-pulse rounded", className)} aria-hidden />;
+}
+
 /** A state the way an account home prints one: quiet uppercase, never tinted. */
 export function StateLabel({ children }: { children: React.ReactNode }): JSX.Element {
   return <span className="text-ink-subtle whitespace-nowrap text-xs uppercase">{children}</span>;

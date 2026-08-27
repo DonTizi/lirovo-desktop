@@ -6,11 +6,12 @@ import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
 import type { RunDetail, RunSummary, ValueRow } from "../main/ipc.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { TitleBar } from "./components/TitleBar";
-import { Badge, Card, CardHeader, ListColumn, Mono, StateLabel, type ListEntry } from "./components/primitives";
+import { ListColumn, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
 import { RunProgress, type LiveStage } from "./components/RunProgress";
 import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
+import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
 import { SystemPanel, type SystemReport } from "./components/SystemPanel";
 import { cn } from "./lib/cn";
@@ -437,56 +438,7 @@ export const App = (): JSX.Element => {
           {tab === "schemas" && <SchemasPage />}
 
           {tab === "library" && (
-            <Card>
-              <CardHeader title="Runs" action={`${runs.length} recorded`} />
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-hairline border-b">
-                    <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                      Source
-                    </th>
-                    <th className="text-ink-label px-4 py-2 text-left text-xs font-medium uppercase tracking-wide">
-                      Status
-                    </th>
-                    <th className="text-ink-label px-4 py-2 text-right text-xs font-medium uppercase tracking-wide">
-                      Values
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-ink-subtle px-4 py-8 text-center">
-                        Nothing extracted yet.
-                      </td>
-                    </tr>
-                  )}
-                  {runs.map((r) => (
-                    <tr
-                      key={r.runId}
-                      className="border-hairline hover:bg-elevated cursor-pointer border-b last:border-b-0"
-                      onClick={() => void openRun(r.runId)}
-                    >
-                      <td className="text-ink-strong px-4 py-2.5">{r.title ?? <Mono>{r.runId}</Mono>}</td>
-                      <td className="px-4 py-2.5">
-                        {r.status === "succeeded" ? (
-                          <Badge tone="success">succeeded</Badge>
-                        ) : r.status === "failed" ? (
-                          <Badge tone="danger">failed</Badge>
-                        ) : r.status === "stopped" ? (
-                          <Badge tone="warning">stopped</Badge>
-                        ) : r.status === "running" ? (
-                          <Badge tone="info">running</Badge>
-                        ) : (
-                          <StateLabel>{r.status}</StateLabel>
-                        )}
-                      </td>
-                      <td className="text-ink-label px-4 py-2.5 text-right tabular-nums">{r.valueCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
+            <Library runs={runs} loading={runs.length === 0 && system === null} onOpen={(id) => void openRun(id)} />
           )}
 
           {detail !== null && (

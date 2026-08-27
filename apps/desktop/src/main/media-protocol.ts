@@ -3,6 +3,9 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { protocol } from "electron";
 import { resolvePaths } from "@lirovo/node-runtime";
+import { MEDIA_SCHEME, pathFromMediaUrl } from "./media-url.js";
+
+export { MEDIA_SCHEME, mediaUrl } from "./media-url.js";
 
 /**
  * `lirovo-media://` — the only way the renderer sees a file.
@@ -14,8 +17,6 @@ import { resolvePaths } from "@lirovo/node-runtime";
  * disk, so instead this scheme serves exactly two directories and resolves
  * every request against them before opening anything.
  */
-export const MEDIA_SCHEME = "lirovo-media";
-
 /** Registered before `app.whenReady`, which is the only moment this is allowed. */
 export const registerMediaScheme = (): void => {
   protocol.registerSchemesAsPrivileged([
@@ -48,11 +49,7 @@ const withinRoot = (candidate: string, root: string): boolean => {
 };
 
 export const handleMediaRequest = (url: string, roots: readonly string[]): Response => {
-  // Host and pathname are recombined because an absolute POSIX path parses as
-  // `//Users/...`, putting the first segment in the host.
-  const parsed = new URL(url);
-  const raw = decodeURIComponent(`${parsed.hostname}${parsed.pathname}`);
-  const file = path.resolve(raw.startsWith("/") ? raw : `/${raw}`);
+  const file = pathFromMediaUrl(url);
 
   if (!roots.some((root) => withinRoot(file, root))) return new Response("forbidden", { status: 403 });
 
@@ -88,10 +85,6 @@ const TYPES: Record<string, string> = {
 };
 
 const contentType = (file: string): string => TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
-
-/** Turn an absolute path into a URL the renderer can put in a src. */
-export const mediaUrl = (absolutePath: string): string =>
-  `${MEDIA_SCHEME}://${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
 
 export const installMediaProtocol = (): void => {
   const roots = [resolvePaths().runs];

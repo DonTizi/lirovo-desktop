@@ -3,10 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- No remote origins: the renderer has no business reaching the network. -->
+    <!--
+      No remote origins: the renderer has no business reaching the network.
+      `lirovo-media:` is this app's own scheme, which serves the run directory
+      and nothing else; without it here every frame and every video is blocked
+      by this policy before the protocol handler is ever consulted. `file:` is
+      NOT listed on purpose — the whole reason the scheme exists is that the
+      renderer should not be able to name an arbitrary path.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; img-src 'self' data: blob: lirovo-media:; media-src 'self' blob: lirovo-media:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
     <title>Lirovo</title>
   </head>

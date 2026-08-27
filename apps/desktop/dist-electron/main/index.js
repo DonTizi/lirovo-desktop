@@ -6060,6 +6060,19 @@ var decoder = { exports: {} };
 })(decoder);
 new AbortController().signal;
 const MEDIA_SCHEME = "lirovo-media";
+const normalise = (raw) => {
+  const out = [];
+  for (const part of raw.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return `/${out.join("/")}`;
+};
+const pathFromMediaUrl = (url) => {
+  const parsed = new URL(url);
+  return normalise(decodeURIComponent(`${parsed.hostname}${parsed.pathname}`));
+};
 const registerMediaScheme = () => {
   protocol.registerSchemesAsPrivileged([
     {
@@ -6081,9 +6094,7 @@ const withinRoot = (candidate, root) => {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 };
 const handleMediaRequest = (url, roots) => {
-  const parsed = new URL(url);
-  const raw = decodeURIComponent(`${parsed.hostname}${parsed.pathname}`);
-  const file = path.resolve(raw.startsWith("/") ? raw : `/${raw}`);
+  const file = pathFromMediaUrl(url);
   if (!roots.some((root) => withinRoot(file, root))) return new Response("forbidden", { status: 403 });
   try {
     const size = statSync(file).size;

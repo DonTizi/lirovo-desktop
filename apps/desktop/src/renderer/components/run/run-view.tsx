@@ -3,10 +3,12 @@ import { motion } from "framer-motion";
 import type { Stage } from "@lirovo/contracts";
 import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
 import { RunProgress, type LiveStage } from "../RunProgress";
+import { Card, CardHeader, Skeleton } from "../primitives";
 import { cn } from "../../lib/cn";
 import { useLens } from "./lens";
 import { Player } from "./player";
-import { FramesTab, GraphTab, TranscriptTab, ValuesTab } from "./tabs";
+import { GraphView } from "./graph-view";
+import { FramesTab, GraphNodes, TranscriptTab, ValuesTab } from "./tabs";
 
 type Pane = "extracted" | "transcript" | "frames" | "graph";
 
@@ -19,16 +21,32 @@ const EMPTY: RunArtifacts = {
   graph: null,
 };
 
+function LoadingPanes(): JSX.Element {
+  return (
+    <Card className="p-4">
+      <div className="grid gap-3">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex items-center gap-3">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="h-4 w-12" />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 /**
- * A finished run, seen four ways.
+ * A finished run, seen four ways, with the recording beside them.
  *
- * Values, transcript, frames and graph are projections of one recording, so
- * they share one player and one clock: a timecode clicked in any of them moves
- * the same video, and every other view follows. That is the product's actual
- * claim — a value you can watch being said — and it only reads as true if the
- * evidence is one click from the number.
+ * Side by side rather than stacked: the whole point is to check a value
+ * against the moment that proves it, and a layout that puts the video above
+ * the evidence makes that a scroll each way. The player stays put while the
+ * right column changes, which is what makes clicking through twenty timecodes
+ * bearable.
  *
- * Panes that have no content are not rendered. A tab that opens onto "nothing
+ * Panes with nothing in them are not rendered. A tab that opens onto "nothing
  * here" costs a click to learn what its absence could have said for free.
  */
 export function RunView({
@@ -46,15 +64,16 @@ export function RunView({
 
   useEffect(() => {
     setArtifacts(null);
-    let live = true;
+    let alive = true;
     void window.lirovo.runArtifacts(detail.runId).then((answer) => {
-      if (live && answer.ok) setArtifacts(answer.value);
+      if (alive && answer.ok) setArtifacts(answer.value);
     });
     return () => {
-      live = false;
+      alive = false;
     };
   }, [detail.runId]);
 
+  const loading = artifacts === null;
   const shown = artifacts ?? EMPTY;
 
   // One mark per evidence span, so the timeline shows where the answers came
@@ -64,50 +83,68 @@ export function RunView({
     [values],
   );
 
-  const panes: { key: Pane; label: string; count: number | null }[] = [
+  const panes: { key: Pane; label: string; count: number }[] = [
     { key: "extracted", label: "Extracted", count: values.length },
     { key: "transcript", label: "Transcript", count: shown.transcript?.segments.length ?? 0 },
     { key: "frames", label: "Frames", count: shown.frames.filter((f) => f.kept).length },
     { key: "graph", label: "Graph", count: shown.graph?.nodes.length ?? 0 },
   ];
-  const available = panes.filter((p) => p.key === "extracted" || (p.count ?? 0) > 0);
+  const available = panes.filter((p) => p.key === "extracted" || p.count > 0);
   const active = available.some((p) => p.key === pane) ? pane : "extracted";
 
   return (
-    <div className="grid gap-4">
-      <RunProgress
-        status={detail.status}
-        live={live}
-        attempts={detail.stages}
-        errorCode={detail.errorCode}
-        errorMessage={detail.errorMessage}
-      />
-
-      <Player artifacts={shown} lens={lens} marks={marks} />
-
-      <div className="border-hairline flex items-center gap-1 border-b">
-        {available.map((p) => (
-          <button
-            key={p.key}
-            onClick={() => setPane(p.key)}
-            className={cn(
-              "relative px-3 py-2 text-sm transition-colors",
-              active === p.key ? "text-ink-strong font-medium" : "text-ink-subtle hover:text-ink",
-            )}
-          >
-            {p.label}
-            {p.count !== null && <span className="text-ink-subtle ml-1.5 text-xs tabular-nums">{p.count}</span>}
-            {active === p.key && (
-              <motion.span layoutId="run-pane" className="bg-ink-strong absolute inset-x-2 -bottom-px h-0.5" />
-            )}
-          </button>
-        ))}
+    <div className="grid gap-4 xl:grid-cols-[minmax(360px,42%)_minmax(0,1fr)] xl:items-start">
+      <div className="grid gap-4 xl:sticky xl:top-4">
+        {loading ? <Skeleton className="h-56 w-full rounded-lg" /> : <Player artifacts={shown} lens={lens} marks={marks} />}
+        <RunProgress
+          status={detail.status}
+          live={live}
+          attempts={detail.stages}
+          errorCode={detail.errorCode}
+          errorMessage={detail.errorMessage}
+        />
       </div>
 
-      {active === "extracted" && <ValuesTab detail={detail} values={values} lens={lens} />}
-      {active === "transcript" && <TranscriptTab artifacts={shown} lens={lens} />}
-      {active === "frames" && <FramesTab artifacts={shown} lens={lens} />}
-      {active === "graph" && <GraphTab artifacts={shown} lens={lens} />}
+      <div className="grid min-w-0 gap-3">
+        <div className="border-hairline flex items-center gap-1 border-b">
+          {available.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPane(p.key)}
+              className={cn(
+                "relative px-3 py-2 text-sm transition-colors",
+                active === p.key ? "text-ink-strong font-medium" : "text-ink-subtle hover:text-ink",
+              )}
+            >
+              {p.label}
+              <span className="text-ink-subtle ml-1.5 text-xs tabular-nums">{p.count}</span>
+              {active === p.key && (
+                <motion.span layoutId="run-pane" className="bg-ink-strong absolute inset-x-2 -bottom-px h-0.5" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {loading && <LoadingPanes />}
+        {!loading && active === "extracted" && <ValuesTab detail={detail} values={values} lens={lens} />}
+        {!loading && active === "transcript" && <TranscriptTab artifacts={shown} lens={lens} />}
+        {!loading && active === "frames" && <FramesTab artifacts={shown} lens={lens} />}
+        {!loading && active === "graph" && (
+          <Card className="overflow-hidden">
+            <CardHeader
+              title="Knowledge graph"
+              action={`${shown.graph?.nodes.length ?? 0} nodes · ${shown.graph?.edges.length ?? 0} edges`}
+            />
+            <GraphView nodes={shown.graph?.nodes ?? []} edges={shown.graph?.edges ?? []} lens={lens} />
+            <details className="border-hairline border-t">
+              <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none px-4 py-2 text-xs transition-colors">
+                List every node
+              </summary>
+              <GraphNodes artifacts={shown} lens={lens} />
+            </details>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

@@ -184,4 +184,10 @@ export interface RunSummary {
   readonly title: string | null;
   readonly createdAt: number;
   readonly valueCount: number;
+  /** How many of those point at a moment. The number that decides trust. */
+  readonly groundedCount: number;
+  readonly durationS: number | null;
+  readonly sourceType: string | null;
+  readonly schemaName: string | null;
+  readonly frameCount: number;
 }

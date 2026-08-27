@@ -234,7 +234,14 @@ const NODE_TIME = (node: Record<string, unknown>): number | null => {
   return null;
 };
 
-export function GraphTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: Lens }): JSX.Element {
+/**
+ * The same nodes as a list, under the drawing.
+ *
+ * The graph answers "what is connected to what"; the list answers "what is
+ * in here", which is a different question and the one that is easier to
+ * scan when there are sixty nodes. Neither replaces the other.
+ */
+export function GraphNodes({ artifacts, lens }: { artifacts: RunArtifacts; lens: Lens }): JSX.Element {
   const nodes = artifacts.graph?.nodes ?? [];
   const byType = new Map<string, Record<string, unknown>[]>();
   for (const node of nodes) {
@@ -243,50 +250,38 @@ export function GraphTab({ artifacts, lens }: { artifacts: RunArtifacts; lens: L
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Knowledge graph"
-        action={
-          artifacts.graph === null
-            ? "none"
-            : `${nodes.length} nodes · ${artifacts.graph.edges.length} edges`
-        }
-      />
-      {nodes.length === 0 ? (
-        <Empty>No graph was written for this run.</Empty>
-      ) : (
-        [...byType.entries()]
-          .sort((a, b) => b[1].length - a[1].length)
-          .map(([type, group]) => (
-            <div key={type}>
-              <p className="text-ink-subtle bg-recessed border-hairline border-y px-4 py-1 text-[11px] uppercase tracking-wide">
-                {type} · {group.length}
-              </p>
-              {group.map((node, i) => {
-                const t = NODE_TIME(node);
-                const label =
-                  (typeof node["label"] === "string" && node["label"]) ||
-                  (typeof node["text"] === "string" && node["text"]) ||
-                  String(node["id"] ?? "");
-                return (
-                  <div
-                    key={`${String(node["id"] ?? i)}`}
-                    className="border-hairline hover:bg-elevated flex items-start gap-3 border-b px-4 py-2 last:border-b-0"
-                  >
-                    {t === null ? (
-                      <span className="text-ink-placeholder w-12 shrink-0 font-mono text-xs">—</span>
-                    ) : (
-                      <span className="w-12 shrink-0">
-                        <Cue t={t} lens={lens} tone="quiet" />
-                      </span>
-                    )}
-                    <span className="text-ink-label min-w-0 flex-1 text-sm">{label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ))
-      )}
-    </Card>
+    <>
+      {[...byType.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([type, group]) => (
+          <div key={type}>
+            <p className="text-ink-subtle bg-recessed border-hairline border-y px-4 py-1 text-[11px] uppercase tracking-wide">
+              {type} · {group.length}
+            </p>
+            {group.map((node, i) => {
+              const t = NODE_TIME(node);
+              const label =
+                (typeof node["label"] === "string" && node["label"]) ||
+                (typeof node["text"] === "string" && node["text"]) ||
+                String(node["id"] ?? "");
+              return (
+                <div
+                  key={`${String(node["id"] ?? i)}`}
+                  className="border-hairline hover:bg-elevated flex items-start gap-3 border-b px-4 py-2 last:border-b-0"
+                >
+                  {t === null ? (
+                    <span className="text-ink-placeholder w-12 shrink-0 font-mono text-xs">—</span>
+                  ) : (
+                    <span className="w-12 shrink-0">
+                      <Cue t={t} lens={lens} tone="quiet" />
+                    </span>
+                  )}
+                  <span className="text-ink-label min-w-0 flex-1 text-sm">{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+    </>
   );
 }
