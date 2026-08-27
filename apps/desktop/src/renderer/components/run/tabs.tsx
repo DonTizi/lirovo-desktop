@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type { RunArtifacts, RunDetail, ValueRow } from "../../../main/ipc.js";
 import { Card, CardHeader, Mono, StateLabel } from "../primitives";
+import { ColumnPicker, StationTable, useColumns, type TableColumn } from "../station-table";
 import { useScrollMask } from "../../lib/useScrollMask";
 import { formatTime, type Lens } from "./lens";
 import { cn } from "../../lib/cn";
@@ -38,9 +39,9 @@ const bare = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").
  * Does this quote say anything the value did not?
  *
  * Pass B routinely writes a value that IS its evidence sentence, so printing
- * both puts the same words on screen twice — thirty-eight times down a page,
- * which is most of what made the list unreadable. The quote earns its line
- * only when it carries something the value does not already contain.
+ * both puts the same words on screen twice — thirty-eight times down a page.
+ * The quote earns its cell only when it carries something the value does not
+ * already contain.
  */
 const addsSomething = (quote: string | null, value: string): boolean => {
   if (quote === null || quote.trim() === "") return false;
@@ -49,48 +50,71 @@ const addsSomething = (quote: string | null, value: string): boolean => {
   return !(q.includes(v) || v.includes(q));
 };
 
-/**
- * One extracted value and the moments that prove it.
- *
- * A row rather than a table cell: the field path is a code, the value is prose
- * of unpredictable length, and the evidence is a list. Three columns forced all
- * three into the width of the narrowest, which is how a 38-row answer became a
- * page of wrapped fragments.
- */
-function ValueRowView({ row, lens }: { row: ValueRow; lens: Lens }): JSX.Element {
-  const modalities = [...new Set(row.evidence.map((e) => e.modality))];
-  const extra = row.evidence.filter((e) => addsSomething(e.quote, row.value));
-
-  return (
-    <div className="border-hairline hover:bg-elevated border-b px-4 py-3 transition-colors last:border-b-0">
-      <div className="flex items-baseline gap-2">
-        <Mono className="text-[11px]">{row.fieldPath}</Mono>
-        {modalities.map((m) => (
-          <span key={m} className="text-ink-subtle text-[10px] uppercase tracking-wide">
-            {m}
-          </span>
-        ))}
-        {row.evidence.length === 0 && <StateLabel>nothing backs this</StateLabel>}
-      </div>
-
-      <p className="text-ink-strong mt-1 text-sm leading-relaxed">{row.value.replace(/^"|"$/g, "")}</p>
-
-      {row.evidence.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {row.evidence.map((e, i) => (
-            <Cue key={`${e.sourceRef}-${i}`} t={e.tStart} lens={lens} />
+const valueColumns = (lens: Lens): readonly TableColumn<ValueRow>[] => [
+  {
+    key: "field",
+    label: "Field",
+    locked: true,
+    cellClass: "whitespace-nowrap",
+    cell: (row) => <Mono className="text-[11px]">{row.fieldPath}</Mono>,
+  },
+  {
+    key: "value",
+    label: "Value",
+    cellClass: "min-w-[220px]",
+    cell: (row) => (
+      <span className="text-ink-strong text-[13px] leading-relaxed">{row.value.replace(/^"|"$/g, "")}</span>
+    ),
+  },
+  {
+    key: "modality",
+    label: "Where",
+    cellClass: "whitespace-nowrap",
+    cell: (row) => {
+      const modalities = [...new Set(row.evidence.map((e) => e.modality))];
+      if (modalities.length === 0) return <StateLabel>unbacked</StateLabel>;
+      return (
+        <span className="flex flex-wrap gap-1">
+          {modalities.map((m) => (
+            <span key={m} className="bg-tint text-ink-label rounded px-1.5 py-0.5 text-[10px] uppercase">
+              {m}
+            </span>
           ))}
-        </div>
-      )}
-
-      {extra.map((e, i) => (
-        <p key={`q${i}`} className="text-ink-subtle mt-1.5 text-xs italic leading-relaxed">
-          “{e.quote}”
-        </p>
-      ))}
-    </div>
-  );
-}
+        </span>
+      );
+    },
+  },
+  {
+    key: "at",
+    label: "Proven at",
+    cellClass: "whitespace-nowrap",
+    cell: (row) => (
+      <span className="flex flex-wrap gap-1">
+        {row.evidence.map((e, i) => (
+          <Cue key={`${e.sourceRef}-${i}`} t={e.tStart} lens={lens} />
+        ))}
+      </span>
+    ),
+  },
+  {
+    key: "quote",
+    label: "Quoted",
+    cellClass: "min-w-[200px] max-w-[320px]",
+    cell: (row) => {
+      const extra = row.evidence.filter((e) => addsSomething(e.quote, row.value));
+      if (extra.length === 0) return <span className="text-ink-placeholder text-xs">–</span>;
+      return (
+        <span className="text-ink-subtle text-xs italic leading-relaxed">
+          {extra.map((e, i) => (
+            <span key={i} className="block">
+              “{e.quote}”
+            </span>
+          ))}
+        </span>
+      );
+    },
+  },
+];
 
 export function ValuesTab({
   detail,
@@ -101,28 +125,36 @@ export function ValuesTab({
   values: readonly ValueRow[];
   lens: Lens;
 }): JSX.Element {
+  const all = valueColumns(lens);
+  const { columns, hidden, onToggle, onShowAll } = useColumns(all);
   const grounded = values.filter((v) => v.evidence.length > 0).length;
+
   return (
-    <Card>
-      <CardHeader
-        title="Extracted"
-        action={
-          <span>
-            {grounded} of {values.length} grounded
-            {detail.transcriptEngine !== null ? ` · ${detail.transcriptEngine}` : ""}
+    <section className="border-hairline bg-base overflow-hidden rounded-xl border">
+      <div className="border-hairline flex items-center justify-between border-b px-5 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Extracted</h2>
+          <span className="bg-fill-hover text-ink-label rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums">
+            {values.length}
           </span>
-        }
-      />
-      {values.length === 0 ? (
-        <Empty>Nothing was extracted. The run record says where it stopped.</Empty>
-      ) : (
-        <div>
-          {values.map((row) => (
-            <ValueRowView key={row.observationId} row={row} lens={lens} />
-          ))}
+          <span className="text-ink-subtle text-xs">
+            {grounded} grounded{detail.transcriptEngine !== null ? ` · ${detail.transcriptEngine}` : ""}
+          </span>
         </div>
-      )}
-    </Card>
+        <ColumnPicker columns={all} hidden={hidden} onToggle={onToggle} onShowAll={onShowAll} />
+      </div>
+
+      <StationTable
+        columns={columns}
+        rows={values}
+        rowKey={(row) => row.observationId}
+        onRowClick={(row) => {
+          const first = row.evidence[0];
+          if (first !== undefined) lens.seek(first.tStart);
+        }}
+        empty="Nothing was extracted. The run record says where it stopped."
+      />
+    </section>
   );
 }
 

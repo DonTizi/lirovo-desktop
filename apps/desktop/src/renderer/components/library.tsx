@@ -1,19 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Check, Columns3, FileVideo, Link2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { AlertTriangle, FileVideo, Link2 } from "lucide-react";
 import type { RunSummary } from "../../main/ipc.js";
 import { PixelField } from "./PixelField";
-import { Skeleton } from "./primitives";
+import { ColumnPicker, StationTable, useColumns } from "./station-table";
+import type { TableColumn } from "./station-table";
 import { cn } from "../lib/cn";
-
-interface Column {
-  readonly key: string;
-  readonly label: string;
-  /** The identity column. Never hidden, because a row without it is anonymous. */
-  readonly locked?: boolean;
-  readonly cellClass?: string;
-  readonly cell: (run: RunSummary) => React.ReactNode;
-}
 
 const clock = (s: number | null): string => {
   if (s === null) return "–";
@@ -46,7 +37,7 @@ function KindBadge({ kind }: { kind: string | null }): JSX.Element {
   );
 }
 
-const COLUMNS: readonly Column[] = [
+const COLUMNS: readonly TableColumn<RunSummary>[] = [
   { key: "kind", label: "Kind", cell: (r) => <KindBadge kind={r.sourceType} /> },
   {
     key: "source",
@@ -197,108 +188,6 @@ function StalledBanner({
   );
 }
 
-function ColumnPicker({
-  hidden,
-  onToggle,
-  onShowAll,
-}: {
-  hidden: ReadonlySet<string>;
-  onToggle: (key: string) => void;
-  onShowAll: () => void;
-}): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLDivElement | null>(null);
-  const shown = COLUMNS.length - hidden.size;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent): void => {
-      if (wrap.current?.contains(e.target as Node) !== true) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
-
-  return (
-    <div ref={wrap} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className={cn(
-          "flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors",
-          open ? "border-line bg-fill-hover text-ink-strong" : "border-hairline text-ink-label hover:bg-fill-hover",
-        )}
-      >
-        <Columns3 className="size-3.5" strokeWidth={1.75} />
-        Columns
-        <span className="text-ink-subtle tabular-nums">
-          {shown}/{COLUMNS.length}
-        </span>
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="border-hairline bg-base shadow-popover absolute right-0 top-9 z-30 w-56 origin-top-right rounded-xl border py-1.5"
-          >
-            <p className="text-ink-subtle px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide">
-              Displayed columns
-            </p>
-            <ul className="max-h-72 overflow-y-auto">
-              {COLUMNS.map((column) => {
-                const on = !hidden.has(column.key);
-                return (
-                  <li key={column.key}>
-                    <button
-                      onClick={() => onToggle(column.key)}
-                      disabled={column.locked === true}
-                      className={cn(
-                        "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] transition-colors",
-                        column.locked === true ? "text-ink-subtle cursor-default" : "text-ink hover:bg-elevated",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "grid size-4 shrink-0 place-items-center rounded border transition-colors",
-                          on ? "bg-ink-strong border-ink-strong text-white" : "border-line text-transparent",
-                        )}
-                      >
-                        <Check className="size-3" strokeWidth={3} />
-                      </span>
-                      <span className="truncate">{column.label}</span>
-                      {column.locked === true && <span className="text-ink-subtle ml-auto text-[10px]">always</span>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="border-hairline mt-1.5 border-t px-3 pt-1.5">
-              <button
-                onClick={onShowAll}
-                disabled={hidden.size === 0}
-                className="text-ink-label hover:text-ink-strong disabled:text-ink-placeholder text-xs transition-colors"
-              >
-                Show all
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 export function Library({
   runs,
   loading,
@@ -311,8 +200,7 @@ export function Library({
   error?: string | null;
   onOpen: (runId: string) => void;
 }): JSX.Element {
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const columns = COLUMNS.filter((c) => !hidden.has(c.key));
+  const { columns, hidden, onToggle, onShowAll } = useColumns(COLUMNS);
 
   const stalled = runs.filter((r) => r.status === "failed" || r.status === "stopped");
   const listed = runs.filter((r) => r.status !== "failed" && r.status !== "stopped");
@@ -331,93 +219,26 @@ export function Library({
               {listed.length}
             </span>
           </div>
-          <ColumnPicker
-            hidden={hidden}
-            onToggle={(key) =>
-              setHidden((current) => {
-                const next = new Set(current);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })
-            }
-            onShowAll={() => setHidden(new Set())}
-          />
+          <ColumnPicker columns={COLUMNS} hidden={hidden} onToggle={onToggle} onShowAll={onShowAll} />
         </div>
 
-        {loading ? (
-          <div className="grid gap-3 px-5 py-5">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="h-5 w-full" />
-            ))}
-          </div>
-        ) : error !== null && error !== undefined ? (
-          <p className="text-danger-text px-5 py-10 text-center font-mono text-xs">{error}</p>
-        ) : listed.length === 0 ? (
-          <p className="text-ink-subtle px-5 py-10 text-center text-sm">
-            {stalled.length > 0 ? "Nothing finished yet." : "Nothing extracted yet."}
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            {/* border-separate: collapsed borders do not paint under a sticky
-                cell, so the separators live on the cells instead. */}
-            <table className="w-full border-separate border-spacing-0 text-sm">
-              <thead>
-                <tr className="text-ink-subtle text-left text-[11px] uppercase tracking-wide">
-                  {columns.map((column, i) => (
-                    <th
-                      key={column.key}
-                      className={cn(
-                        "border-hairline whitespace-nowrap border-b py-2 font-medium",
-                        i === 0 ? "px-5" : "px-3",
-                      )}
-                    >
-                      {column.label}
-                    </th>
-                  ))}
-                  <th className="border-hairline sticky right-0 w-0 border-b p-0" />
-                </tr>
-              </thead>
-              <tbody>
-                {listed.map((run) => (
-                  <tr
-                    key={run.runId}
-                    onClick={() => onOpen(run.runId)}
-                    className="group hover:bg-elevated cursor-pointer"
-                  >
-                    {columns.map((column, i) => (
-                      <td
-                        key={column.key}
-                        className={cn(
-                          "border-hairline border-b py-3",
-                          i === 0 ? "px-5" : "px-3",
-                          column.cellClass,
-                        )}
-                      >
-                        {column.cell(run)}
-                      </td>
-                    ))}
-                    {/* Zero-width: the overlay hangs off this cell, so a row
-                        that is not hovered keeps no empty space for it. */}
-                    <td className="border-hairline sticky right-0 z-20 w-0 border-b p-0">
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="bg-base group-hover:bg-elevated absolute inset-y-0 right-0 flex items-center gap-1.5 pl-10 pr-5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100"
-                      >
-                        <button
-                          onClick={() => onOpen(run.runId)}
-                          className="liq-solid liq-solid-brand rounded-md px-2.5 py-1 text-xs font-medium"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <StationTable
+          columns={columns}
+          rows={listed}
+          rowKey={(run) => run.runId}
+          onRowClick={(run) => onOpen(run.runId)}
+          {...(loading ? { loading } : {})}
+          {...(error !== null && error !== undefined ? { error } : {})}
+          empty={stalled.length > 0 ? "Nothing finished yet." : "Nothing extracted yet."}
+          actions={(run) => (
+            <button
+              onClick={() => onOpen(run.runId)}
+              className="liq-solid liq-solid-brand rounded-md px-2.5 py-1 text-xs font-medium"
+            >
+              Review
+            </button>
+          )}
+        />
       </section>
     </div>
   );
