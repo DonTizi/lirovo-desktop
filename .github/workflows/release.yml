@@ -44,9 +44,10 @@ jobs:
     environment: release
 
     strategy:
-      # Not fail-fast: if arm64 notarisation times out there is no reason to
-      # throw away a finished x64 build. A half-published release is fixed by
-      # re-running one job.
+      # Not fail-fast: nothing is published until both architectures have
+      # finished, so letting the second one run costs nothing and means a
+      # notarisation timeout on one arch still leaves the other's log — and its
+      # artifact — to re-run against rather than rebuild from scratch.
       fail-fast: false
       matrix:
         arch: [arm64, x64]
@@ -166,6 +167,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The merge script and the lockfile live in the repo, and this job runs
+      # both. Without this it fails on the first command with no package.json.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
       # NOT `merge-multiple: true`. Each architecture wrote a complete
       # `latest-mac.yml` naming only its own two files, under the same name;
       # merging the directories would let one silently overwrite the other and
@@ -201,10 +209,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # The merged feed last, so it is never overwritten by a per-arch one.
-          gh release upload "${{ github.event.release.tag_name }}" \
-            dist/arm64/*.dmg dist/arm64/*.zip dist/arm64/*.blockmap \
-            dist/x64/*.dmg dist/x64/*.zip dist/x64/*.blockmap \
+          # An unmatched glob is passed through as a literal, and `gh` then
+          # fails on a filename with a `*` in it — a confusing way to learn
+          # that a build produced nothing.
+          shopt -s nullglob
+          FILES=(dist/arm64/*.dmg dist/arm64/*.zip dist/arm64/*.blockmap
+                 dist/x64/*.dmg dist/x64/*.zip dist/x64/*.blockmap)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::no artifacts to publish"; exit 1
+          fi
+          printf 'uploading %s\n' "${FILES[@]}"
+          gh release upload "${{ github.event.release.tag_name }}" "${FILES[@]}" \
             --repo "${{ github.repository }}" --clobber
+
+          # The merged feed last, so a per-arch one can never land on top of it.
           gh release upload "${{ github.event.release.tag_name }}" dist/merged/*-mac.yml \
             --repo "${{ github.repository }}" --clobber

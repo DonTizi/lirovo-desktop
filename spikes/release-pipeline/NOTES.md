@@ -141,6 +141,36 @@ GPU get `allow-jit` alone — so it is probably unnecessary here. Dropping it is
 cause of "the signed build crashes on launch", and there is no signed build of this app to test
 the claim against. First signed build: drop it, launch, and keep the answer.
 
+### 8. The beta channel writes its own feed, and `--publish never` does not stop it
+
+The one thing that could not be got wrong twice: a preview build writing `latest-mac.yml` hands a
+beta to every stable user. Earlier finding — building `0.0.1-beta.1` and letting electron-builder
+infer the channel from the version wrote **`latest-mac.yml`**. Inference does not work for the
+`github` provider.
+
+The explicit flag does, and it survives `--publish never`. Built locally:
+
+```
+electron-builder --mac --arm64 --publish never -c.publish.channel=beta
+→ release/beta-mac.yml
+```
+
+That matters twice over, because the release job no longer publishes from the matrix — it builds
+with `--publish never` and uploads afterwards. Had `--publish never` suppressed the feed, the
+merge step would have had nothing to merge and the release would carry no update metadata at all.
+It does not: the feed is written either way.
+
+The merge and the both-architectures gate were then run against a real `beta-mac.yml`: 2 feeds in,
+4 files out, gate passes; either single-arch feed is blocked.
+
+### 9. The publisher never checked the repo out
+
+Found by re-reading the workflow rather than by running it. `publish-release` ran
+`pnpm install --frozen-lockfile` and `node apps/desktop/scripts/merge-update-feeds.mjs` in a
+workspace with no repository in it. It would have failed on the first command of the first real
+release, after both architectures had already signed and notarised — the most expensive possible
+place to discover a missing four-line step.
+
 ---
 
 ## Still open
