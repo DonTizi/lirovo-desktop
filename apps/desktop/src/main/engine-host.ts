@@ -28,6 +28,9 @@ import {
   createSettingsStore,
   createStageLedger,
   installArtifact,
+  purgeEverything,
+  purgeRuns,
+  storageReport,
   isUrl,
   makeAsrProbe,
   makeBinaryProbe,
@@ -360,73 +363,17 @@ const setWhisperModel = (id: string): void => {
   if (spec !== null) process.env["LIROVO_WHISPER_MODEL"] = pathJoin(paths.data, spec.relPath);
 };
 
-/** Bytes under a directory, or zero when it is not there yet. */
-const sizeOf = async (dir: string): Promise<number> => {
-  const { readdir, stat } = await import("node:fs/promises");
-  let total = 0;
-  const walk = async (at: string): Promise<void> => {
-    let entries;
-    try {
-      entries = await readdir(at, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = pathJoin(at, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else total += (await stat(full).catch(() => ({ size: 0 }))).size;
-    }
-  };
-  await walk(dir);
-  return total;
-};
-
-const storage = async (): Promise<StorageReport> => {
-  const { stat } = await import("node:fs/promises");
-  const [runsBytes, modelsBytes, binBytes] = await Promise.all([
-    sizeOf(paths.runs),
-    sizeOf(paths.models),
-    sizeOf(pathJoin(paths.data, "bin")),
-  ]);
-  return {
-    dataDir: paths.data,
-    runCount: withDb((db) => (db.prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n),
-    runsBytes,
-    modelsBytes,
-    binBytes,
-    dbBytes: (await stat(paths.dbFile).catch(() => ({ size: 0 }))).size,
-  };
-};
+const storage = async (): Promise<StorageReport> => withDb((db) => storageReport(paths, db));
 
 /**
  * Delete, for real.
  *
- * `runs` keeps the schemas, the settings and the downloaded model — the things
- * that took a decision or a download to obtain — and removes the extractions
- * and their artifacts, which is what actually fills a disk. `everything`
- * removes the data directory outright, which is the honest meaning of
- * uninstall for an app whose entire state lives in one folder.
+ * Both live in node-runtime so they can be tested against a real filesystem
+ * and a real database, which is not something a module that talks to
+ * `process.parentPort` can be.
  */
-const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> => {
-  const { rm, mkdir } = await import("node:fs/promises");
-  if (what === "everything") {
-    const freed = await sizeOf(paths.data);
-    await rm(paths.data, { recursive: true, force: true });
-    await mkdir(paths.data, { recursive: true });
-    return { freedBytes: freed };
-  }
-
-  const freed = await sizeOf(paths.runs);
-  await rm(paths.runs, { recursive: true, force: true });
-  await mkdir(paths.runs, { recursive: true });
-  // The rows go with the files. A run row whose artifacts are gone is a row
-  // that opens onto a broken page.
-  withDb((db) => {
-    db.exec("DELETE FROM runs");
-    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
-  });
-  return { freedBytes: freed };
-};
+const purge = async (what: "runs" | "everything"): Promise<{ freedBytes: number }> =>
+  what === "everything" ? purgeEverything(paths) : withDb((db) => purgeRuns(paths, db));
 
 const preferences = (): Preferences =>
   withDb((db) => {

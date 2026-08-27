@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { createHash, randomBytes } from "node:crypto";
-import { access, constants, mkdir, rm, chmod, rename, stat, mkdtemp, readdir, readFile, copyFile, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, rm, chmod, rename, stat, readdir, mkdtemp, readFile, copyFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir, hostname } from "node:os";
 import path, { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -4836,6 +4836,59 @@ const hashOf = async (file) => {
   for await (const chunk2 of createReadStream(file))
     hash.update(chunk2);
   return { sha256: hash.digest("hex"), bytes: size };
+};
+const directorySize = async (dir) => {
+  let total = 0;
+  const walk = async (at) => {
+    let entries;
+    try {
+      entries = await readdir(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory())
+        await walk(full);
+      else
+        total += (await stat(full).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await walk(dir);
+  return total;
+};
+const storageReport = async (paths2, db) => {
+  const [runsBytes, modelsBytes, binBytes, dbBytes] = await Promise.all([
+    directorySize(paths2.runs),
+    directorySize(paths2.models),
+    directorySize(path.join(paths2.data, "bin")),
+    stat(paths2.dbFile).then((s) => s.size).catch(() => 0)
+  ]);
+  return {
+    dataDir: paths2.data,
+    runCount: db.prepare("SELECT COUNT(*) AS n FROM runs").get().n,
+    runsBytes,
+    modelsBytes,
+    binBytes,
+    dbBytes
+  };
+};
+const purgeRuns = async (paths2, db) => {
+  const freedBytes = await directorySize(paths2.runs);
+  await rm(paths2.runs, { recursive: true, force: true });
+  await mkdir(paths2.runs, { recursive: true });
+  const clear = db.transaction(() => {
+    db.exec("DELETE FROM runs");
+    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
+  });
+  clear.immediate();
+  return { freedBytes };
+};
+const purgeEverything = async (paths2) => {
+  const freedBytes = await directorySize(paths2.data);
+  await rm(paths2.data, { recursive: true, force: true });
+  await mkdir(paths2.data, { recursive: true });
+  return { freedBytes };
 };
 const HASH_SIZE = 8;
 const RESIZED_SIZE = 32;
@@ -10653,58 +10706,8 @@ const setWhisperModel = (id) => {
   const spec = whisperModelInstallable(id);
   if (spec !== null) process.env["LIROVO_WHISPER_MODEL"] = join(paths.data, spec.relPath);
 };
-const sizeOf = async (dir) => {
-  const { readdir: readdir2, stat: stat2 } = await import("node:fs/promises");
-  let total = 0;
-  const walk = async (at) => {
-    let entries;
-    try {
-      entries = await readdir2(at, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = join(at, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else total += (await stat2(full).catch(() => ({ size: 0 }))).size;
-    }
-  };
-  await walk(dir);
-  return total;
-};
-const storage = async () => {
-  const { stat: stat2 } = await import("node:fs/promises");
-  const [runsBytes, modelsBytes, binBytes] = await Promise.all([
-    sizeOf(paths.runs),
-    sizeOf(paths.models),
-    sizeOf(join(paths.data, "bin"))
-  ]);
-  return {
-    dataDir: paths.data,
-    runCount: withDb((db) => db.prepare("SELECT COUNT(*) AS n FROM runs").get().n),
-    runsBytes,
-    modelsBytes,
-    binBytes,
-    dbBytes: (await stat2(paths.dbFile).catch(() => ({ size: 0 }))).size
-  };
-};
-const purge = async (what) => {
-  const { rm: rm2, mkdir: mkdir2 } = await import("node:fs/promises");
-  if (what === "everything") {
-    const freed2 = await sizeOf(paths.data);
-    await rm2(paths.data, { recursive: true, force: true });
-    await mkdir2(paths.data, { recursive: true });
-    return { freedBytes: freed2 };
-  }
-  const freed = await sizeOf(paths.runs);
-  await rm2(paths.runs, { recursive: true, force: true });
-  await mkdir2(paths.runs, { recursive: true });
-  withDb((db) => {
-    db.exec("DELETE FROM runs");
-    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
-  });
-  return { freedBytes: freed };
-};
+const storage = async () => withDb((db) => storageReport(paths, db));
+const purge = async (what) => what === "everything" ? purgeEverything(paths) : withDb((db) => purgeRuns(paths, db));
 const preferences = () => withDb((db) => {
   const settings = createSettingsStore(db);
   return {

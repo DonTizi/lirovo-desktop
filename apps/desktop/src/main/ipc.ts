@@ -42,14 +42,8 @@ export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 export const purgeSchema = z.object({ what: z.enum(["runs", "everything"]) });
 export const revealSchema = z.object({ path: z.string().min(1) });
 
-export interface StorageReport {
-  readonly dataDir: string;
-  readonly runCount: number;
-  readonly runsBytes: number;
-  readonly modelsBytes: number;
-  readonly binBytes: number;
-  readonly dbBytes: number;
-}
+/** Defined where it is computed. Two copies of a shape are two shapes. */
+export type { StorageReport } from "@lirovo/node-runtime";
 
 /** Which of the two fetchable dependencies to install. */
 export const installSchema = z.object({
