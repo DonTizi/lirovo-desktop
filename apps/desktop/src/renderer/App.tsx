@@ -115,6 +115,8 @@ export const App = (): JSX.Element => {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
   const [fields, setFields] = useState<FieldSpec[]>([...(SCHEMA_PRESETS[0]?.fields ?? [])]);
+  const [schemaLabel, setSchemaLabel] = useState(SCHEMA_PRESETS[0]?.label ?? "Transcript only");
+  const [schemaVersion, setSchemaVersion] = useState<number | null>(null);
   // Set only while the fields are exactly a stored revision, so a run can point
   // at the contract it was actually asked with.
   const [revisionId, setRevisionId] = useState<string | null>(null);
@@ -344,9 +346,30 @@ export const App = (): JSX.Element => {
                 )}
 
                 <SchemaPicker
+                  label={schemaLabel}
+                  version={schemaVersion}
                   fields={fields}
-                  onChange={setFields}
-                  onPickSaved={setRevisionId}
+                  onChoose={(choice) => {
+                    setFields([...choice.fields]);
+                    setSchemaLabel(choice.label);
+                    setRevisionId(choice.revisionId);
+                    setSchemaVersion(null);
+                    if (choice.revisionId !== null) {
+                      // The badge on the trigger has to be the version actually
+                      // in force, not a number guessed from the label.
+                      void window.lirovo.listSchemas().then((answer) => {
+                        if (!answer.ok) return;
+                        setSchemaVersion(answer.value.find((x) => x.name === choice.label)?.version ?? null);
+                      });
+                    }
+                  }}
+                  onEdit={(next) => {
+                    setFields(next);
+                    // Edited in place, so it is no longer the stored revision.
+                    setRevisionId(null);
+                    setSchemaVersion(null);
+                    setSchemaLabel((current) => (current.endsWith(" (edited)") ? current : `${current} (edited)`));
+                  }}
                   onManage={() => setTab("schemas")}
                 />
               </div>

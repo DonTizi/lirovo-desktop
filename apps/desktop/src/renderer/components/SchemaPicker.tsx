@@ -1,109 +1,46 @@
-import { useEffect, useState } from "react";
-import { SCHEMA_PRESETS, compileSchema, fieldsFingerprint, type FieldSpec } from "@lirovo/core";
-import type { SchemaSummary } from "@lirovo/node-runtime";
+import { compileSchema, type FieldSpec } from "@lirovo/core";
 import { FieldRows } from "./FieldRows";
-import { cn } from "../lib/cn";
-
-const same = (a: readonly FieldSpec[], b: readonly FieldSpec[]): boolean =>
-  fieldsFingerprint(a) === fieldsFingerprint(b);
+import { SchemaSelect, type SchemaChoice } from "./SchemaSelect";
 
 /**
  * What to pull out of this video.
  *
- * Saved schemas come first because they are the ones with descriptions someone
- * has already refined; the presets are starting points for a first run. Editing
- * here changes THIS run only — a schema is revised where it lives, on the
- * Schemas tab, so an edit made in passing cannot silently rewrite the contract
- * every earlier run pointed at.
+ * Editing the rows here changes THIS run only. A schema is revised where it
+ * lives, on the Schemas tab, so an edit made in passing cannot rewrite the
+ * contract every earlier run points at — and the moment a row is touched the
+ * link to the stored revision is dropped, because claiming a revision the run
+ * did not use is worse than claiming none.
  */
 export function SchemaPicker({
+  label,
+  version,
   fields,
-  onChange,
-  onPickSaved,
+  onChoose,
+  onEdit,
   onManage,
 }: {
+  label: string;
+  version: number | null;
   fields: readonly FieldSpec[];
-  onChange: (fields: FieldSpec[]) => void;
-  onPickSaved: (revisionId: string | null) => void;
+  onChoose: (choice: SchemaChoice) => void;
+  onEdit: (fields: FieldSpec[]) => void;
   onManage: () => void;
 }): JSX.Element {
-  const [saved, setSaved] = useState<SchemaSummary[]>([]);
-
-  useEffect(() => {
-    void window.lirovo.listSchemas().then((answer) => {
-      if (answer.ok) setSaved(answer.value);
-    });
-  }, []);
-
-  const chip = (active: boolean): string =>
-    cn(
-      "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-      active ? "bg-ink-strong text-ink-inverse" : "bg-tint text-ink-label hover:bg-fill hover:text-ink-strong",
-    );
-
   return (
     <div className="mt-6">
-      <div className="mb-2 flex items-center justify-center gap-2">
-        <p className="text-ink-label text-xs uppercase tracking-wide">What should it pull out?</p>
-        <button className="text-ink-subtle hover:text-ink text-[11px] transition-colors" onClick={onManage}>
-          Manage schemas
-        </button>
-      </div>
+      <p className="text-ink-label mb-2 text-center text-xs uppercase tracking-wide">What should it pull out?</p>
 
-      <div className="mb-3 flex flex-wrap justify-center gap-2">
-        {saved.map((s) => (
-          <button
-            key={s.id}
-            title={s.description ?? undefined}
-            className={chip(false)}
-            onClick={async () => {
-              const answer = await window.lirovo.schemaRevisions(s.id);
-              if (!answer.ok) return;
-              const current = answer.value.find((r) => r.published) ?? answer.value[0];
-              if (current === undefined) return;
-              onChange([...current.fields]);
-              onPickSaved(current.id);
-            }}
-          >
-            {s.name}
-            <span className="text-ink-subtle ml-1.5">v{s.version}</span>
-          </button>
-        ))}
-
-        {SCHEMA_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            title={preset.about}
-            className={chip(same(fields, preset.fields))}
-            onClick={() => {
-              onChange([...preset.fields]);
-              onPickSaved(null);
-            }}
-          >
-            {preset.label}
-          </button>
-        ))}
-
-        <button
-          className={chip(fields.length === 0)}
-          title="Transcribe and detect scenes, without filling any fields"
-          onClick={() => {
-            onChange([]);
-            onPickSaved(null);
-          }}
-        >
-          Transcript only
-        </button>
+      <div className="mx-auto mb-2 max-w-md">
+        <SchemaSelect
+          current={{ label, fieldCount: fields.length, version }}
+          onChoose={onChoose}
+          onManage={onManage}
+        />
       </div>
 
       <FieldRows
         fields={fields}
-        onChange={(next) => {
-          onChange(next);
-          // Edited in place, so it is no longer the stored revision — saying it
-          // was would attach this run to a contract it did not use.
-          onPickSaved(null);
-        }}
+        onChange={onEdit}
         emptyNote="No fields. The video will be transcribed and its scenes detected, and nothing will be filled in."
       />
 

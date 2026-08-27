@@ -1,5 +1,7 @@
 import { motion } from "framer-motion";
 import { Plus, X } from "lucide-react";
+import { useRef } from "react";
+import { useScrollMask } from "../lib/useScrollMask";
 import type { FieldKind, FieldSpec } from "@lirovo/core";
 import { cn } from "../lib/cn";
 
@@ -28,11 +30,23 @@ export function FieldRows({
   emptyNote: string;
   className?: string;
 }): JSX.Element {
+  const list = useRef<HTMLDivElement>(null);
+  const { maskImage, onScroll } = useScrollMask(list, [fields.length]);
+
   const setField = (index: number, patch: Partial<FieldSpec>): void =>
     onChange(fields.map((f, i) => (i === index ? { ...f, ...patch } : f)));
 
   return (
     <div className={cn("bg-base shadow-ring overflow-hidden rounded-lg", className)}>
+      {/* Bounded on purpose. A schema with twelve fields would otherwise push
+          everything below it off the screen, and the page would grow every time
+          someone added a row. Five is where the list stops being a glance. */}
+      <div
+        ref={list}
+        onScroll={onScroll}
+        style={maskImage === undefined ? undefined : { WebkitMaskImage: maskImage, maskImage }}
+        className="scrollbar-hide max-h-[280px] overflow-y-auto overscroll-contain"
+      >
       {fields.length === 0 ? (
         <p className="text-ink-subtle px-4 py-4 text-center text-xs">{emptyNote}</p>
       ) : (
@@ -84,7 +98,10 @@ export function FieldRows({
           </motion.div>
         ))
       )}
+      </div>
 
+      {/* Pinned below the scroller: the way to add a row must not scroll away
+          the moment there are enough rows to need scrolling. */}
       <button
         className="border-hairline text-ink-subtle hover:bg-elevated hover:text-ink flex w-full items-center justify-center gap-1.5 border-t px-3 py-2 text-xs transition-colors"
         onClick={() => onChange([...fields, { name: "", kind: "text" }])}

@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { ChevronRight, MoreHorizontal } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef } from "react";
+import { useScrollMask } from "../lib/useScrollMask";
 import { cn } from "../lib/cn";
 
 /** A card: a hairline ring, no border, no soft shadow. */
@@ -132,28 +133,7 @@ export function ListColumn({
   onTitle?: () => void;
 }): JSX.Element {
   const listRef = useRef<HTMLUListElement>(null);
-  const [canScrollUp, setCanScrollUp] = useState(false);
-  const [canScrollDown, setCanScrollDown] = useState(entries.length > 5);
-
-  const updateScrollState = useCallback(() => {
-    const list = listRef.current;
-    if (list === null) return;
-    setCanScrollUp(list.scrollTop > 1);
-    setCanScrollDown(list.scrollTop + list.clientHeight < list.scrollHeight - 1);
-  }, []);
-
-  useEffect(() => {
-    updateScrollState();
-  }, [entries, updateScrollState]);
-
-  const maskImage =
-    canScrollUp && canScrollDown
-      ? "linear-gradient(to bottom, transparent 0, black 24px, black calc(100% - 24px), transparent 100%)"
-      : canScrollUp
-        ? "linear-gradient(to bottom, transparent 0, black 24px, black 100%)"
-        : canScrollDown
-          ? "linear-gradient(to bottom, black 0, black calc(100% - 24px), transparent 100%)"
-          : undefined;
+  const { maskImage, onScroll } = useScrollMask(listRef, [entries.length]);
 
   return (
     <motion.section
@@ -189,7 +169,7 @@ export function ListColumn({
           ref={listRef}
           tabIndex={0}
           aria-label={`${title} list`}
-          onScroll={updateScrollState}
+          onScroll={onScroll}
           style={maskImage !== undefined ? { WebkitMaskImage: maskImage, maskImage } : undefined}
           className="scrollbar-hide max-h-80 overflow-y-auto overscroll-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--kumo-focus)]"
         >
