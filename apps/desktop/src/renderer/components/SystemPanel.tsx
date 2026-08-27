@@ -14,6 +14,8 @@ export interface SystemReport {
   readonly dependencies: readonly BinaryStatus[];
   readonly backends: readonly BackendStatus[];
   readonly asr: readonly AsrProbe[];
+  /** Which model the user picked for the next run, if they picked one. */
+  readonly defaultBackendId: string | null;
 }
 
 type Health = "ok" | "warn" | "off";
@@ -101,12 +103,19 @@ function CopyFix({ fix, solid }: { fix: Fix; solid?: boolean }): JSX.Element {
  * A column of identical "Ready"s trains the eye to skip that column, which is
  * exactly the column that has to be read the day one of them changes.
  */
-function Row({ item }: { item: Item }): JSX.Element {
-  return (
-    <div
-      title={item.role}
-      className="hover:bg-elevated flex h-9 items-center gap-2.5 px-3.5 transition-colors"
-    >
+function Row({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: Item;
+  /** Set only on a row that is one of several a user picks between. */
+  selected?: boolean;
+  onSelect?: () => void;
+}): JSX.Element {
+  const choosable = onSelect !== undefined;
+  const body = (
+    <>
       <Mark id={item.id} className={cn("size-4", item.health === "off" && "opacity-35 grayscale")} />
       <span className="text-ink-strong w-28 shrink-0 truncate text-sm font-medium">{label(item.id)}</span>
       <span className={cn("text-ink-subtle min-w-0 flex-1 truncate text-xs", item.fix !== null && "font-mono")}>
@@ -114,15 +123,57 @@ function Row({ item }: { item: Item }): JSX.Element {
       </span>
       {item.fix !== null ? (
         <CopyFix fix={item.fix} />
+      ) : selected === true ? (
+        <span className="text-ink-strong flex shrink-0 items-center gap-1 text-xs font-medium">
+          <Check className="size-3.5" />
+          Default
+        </span>
+      ) : choosable ? (
+        // Only on hover: a row of "Use" buttons next to the one that says
+        // Default turns a settled choice back into a decision every time.
+        <span className="text-ink-subtle shrink-0 text-xs opacity-0 transition-opacity group-hover:opacity-100">
+          Make default
+        </span>
       ) : item.state !== "" ? (
         <span className="text-ink-subtle shrink-0 text-xs">{item.state}</span>
       ) : null}
+    </>
+  );
+
+  const shell = "group flex h-9 w-full items-center gap-2.5 px-3.5 text-left transition-colors hover:bg-elevated";
+  return choosable ? (
+    <button title={item.role} onClick={onSelect} className={cn(shell, selected === true && "bg-elevated")}>
+      {body}
+    </button>
+  ) : (
+    <div title={item.role} className={shell}>
+      {body}
     </div>
   );
 }
 
-function Caption({ children }: { children: React.ReactNode }): JSX.Element {
-  return <p className="text-ink-subtle px-3.5 pb-1 pt-3 text-[11px] uppercase tracking-wide">{children}</p>;
+/**
+ * A group's name, its rule, and whether the rule is met.
+ *
+ * The rule is the part a list of rows cannot express: three green models and
+ * three green tools look identical, and yet one group needs all of its members
+ * and the other needs exactly one.
+ */
+function Caption({ title, rule, note, tone }: { title: string; rule: string; note: string; tone: Health }): JSX.Element {
+  return (
+    <div className="flex items-baseline gap-2 px-3.5 pb-1 pt-3">
+      <p className="text-ink-subtle text-[11px] uppercase tracking-wide">{title}</p>
+      <p className="text-ink-placeholder text-[11px]">{rule}</p>
+      <p
+        className={cn(
+          "ml-auto truncate text-[11px]",
+          tone === "off" ? "text-danger-text" : tone === "warn" ? "text-warning-text" : "text-ink-subtle",
+        )}
+      >
+        {note}
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -203,13 +254,56 @@ const fromAsr = (probe: AsrProbe, toolFix: Fix | null): Item => {
   };
 };
 
+/**
+ * What a group's rule means for this machine, said as a consequence.
+ *
+ * "yt-dlp missing" is a fact about a binary. "links cannot be downloaded" is
+ * the same fact in the terms the person actually cares about, and it is the
+ * only version that tells them whether to act.
+ */
+const MEDIA_LOSS: Record<string, { missing: string; stale: string }> = {
+  ffmpeg: { missing: "nothing can be extracted", stale: "" },
+  "yt-dlp": { missing: "links cannot be downloaded", stale: "downloads will start failing" },
+};
+
+const mediaVerdict = (items: readonly Item[]): { note: string; tone: Health } => {
+  const hurt = worstFirst(items.filter((i) => i.health !== "ok"))[0];
+  if (hurt === undefined) return { note: "both present", tone: "ok" };
+  const loss = MEDIA_LOSS[hurt.id];
+  const said = hurt.state === "Out of date" ? (loss?.stale ?? "") : (loss?.missing ?? "");
+  return { note: said === "" ? `${label(hurt.id)} ${hurt.state.toLowerCase()}` : said, tone: hurt.health };
+};
+
+const transcriptionVerdict = (probes: readonly AsrProbe[]): { note: string; tone: Health } => {
+  const links = probes.some((p) => p.forUrl);
+  const files = probes.some((p) => p.forFile);
+  if (links && files) return { note: "links and local files", tone: "ok" };
+  if (links) return { note: "local files cannot be transcribed", tone: "warn" };
+  if (files) return { note: "links cannot be transcribed", tone: "warn" };
+  return { note: "nothing can be transcribed", tone: "off" };
+};
+
+const modelVerdict = (items: readonly Item[], chosenId: string | null): { note: string; tone: Health } => {
+  const live = items.filter((i) => i.health === "ok");
+  if (live.length === 0) return { note: "none available — extraction cannot run", tone: "off" };
+  const chosen = live.find((i) => i.id === chosenId) ?? live[0];
+  // Names the model that will actually run, not the one that is stored: a
+  // preference pointing at something that quit should not read as in force.
+  return {
+    note: `${label(chosen?.id ?? "")} runs the next extraction`,
+    tone: "ok",
+  };
+};
+
 export function SystemPanel({
   report,
   onRecheck,
+  onChooseBackend,
   checking,
 }: {
   report: SystemReport | null;
   onRecheck: () => void;
+  onChooseBackend: (backendId: string) => void;
   checking: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -242,7 +336,15 @@ export function SystemPanel({
   // "something is wrong" about a machine that was completely fine.
   const health: Health = !report.ok ? "off" : report.warnings.length > 0 ? "warn" : "ok";
 
-  const blocking = worstFirst(all.filter((i): i is Item & { readonly fix: Fix } => i.fix !== null && i.health === "off"))[0] ?? null;
+  const blocking =
+    worstFirst(all.filter((i): i is Item & { readonly fix: Fix } => i.fix !== null && i.health === "off"))[0] ?? null;
+
+  // The stored choice only counts while that model still answers. Marking a
+  // backend "Default" while a different one would actually run is the kind of
+  // small lie that makes people stop trusting the whole panel.
+  const liveModels = models.filter((m) => m.health === "ok");
+  const effectiveBackendId =
+    liveModels.find((m) => m.id === report.defaultBackendId)?.id ?? liveModels[0]?.id ?? null;
 
   const headline = !report.ok ? "Not ready" : "Ready to extract";
   const because = !report.ok
@@ -310,19 +412,25 @@ export function SystemPanel({
             className="overflow-hidden"
           >
             <div className="border-hairline border-t pb-2">
-              <Caption>Media</Caption>
+              <Caption title="Media" rule="both needed" {...mediaVerdict(media)} />
               {worstFirst(media).map((item) => (
                 <Row key={item.id} item={item} />
               ))}
 
-              <Caption>Transcription</Caption>
+              <Caption title="Transcription" rule="one is enough" {...transcriptionVerdict(report.asr)} />
               {worstFirst(transcription).map((item) => (
                 <Row key={item.id} item={item} />
               ))}
 
-              <Caption>Models</Caption>
+              <Caption title="Models" rule="pick one" {...modelVerdict(models, report.defaultBackendId)} />
               {worstFirst(models).map((item) => (
-                <Row key={item.id} item={item} />
+                <Row
+                  key={item.id}
+                  item={item}
+                  {...(item.health === "ok"
+                    ? { selected: item.id === effectiveBackendId, onSelect: () => onChooseBackend(item.id) }
+                    : {})}
+                />
               ))}
 
               <p className="text-ink-subtle mt-2 px-3.5 text-[11px]">

@@ -21,6 +21,7 @@ import {
   buildMediaStages,
   createFsArtifactStore,
   createRunStore,
+  createSettingsStore,
   openDatabase,
   persistExtraction,
   persistManifest,
@@ -205,7 +206,11 @@ export const extractCommand = async (
       // Resolve the backend BEFORE any download: discovering there is nothing
       // to reason with after a twenty-minute ingest is the worst moment to
       // find out.
-      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), opts.backendId);
+      // `--backend` first, then whatever the desktop app last chose: one
+      // database, one preference, so `lirovo extract` cannot quietly disagree
+      // with the model the user selected in the window.
+      const preferred = opts.backendId ?? createSettingsStore(db).get("default_backend");
+      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), preferred);
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
 

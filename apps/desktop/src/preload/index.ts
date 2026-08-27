@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/ipc.js";
-import type { ExtractRequest, RunDetail, RunSummary, SourceInspection } from "../main/ipc.js";
+import type { ExtractRequest, Preferences, RunDetail, RunSummary, SourceInspection } from "../main/ipc.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 
@@ -35,6 +35,10 @@ const api = {
   archiveSchema: (schemaId: string): Promise<Result<unknown>> =>
     ipcRenderer.invoke(CHANNELS.archiveSchema, { schemaId }),
   pickFile: (): Promise<Result<string | null>> => ipcRenderer.invoke(CHANNELS.pickFile),
+
+  preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
+  setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
+    ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
 
   /**
    * A dropped file gives the renderer a File object with no path. This is the

@@ -15,6 +15,7 @@ import {
   createFsArtifactStore,
   createRunStore,
   createSchemaStore,
+  createSettingsStore,
   createStageLedger,
   isUrl,
   makeAsrProbe,
@@ -28,7 +29,7 @@ import {
   selectBackend,
   sourceTypeOf,
 } from "@lirovo/node-runtime";
-import type { ExtractRequest, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
+import type { ExtractRequest, Preferences, RunDetail, RunSummary, SourceInspection, ValueRow } from "./ipc.js";
 import type { z } from "zod";
 import type { saveSchemaRequestSchema } from "./ipc.js";
 
@@ -55,7 +56,9 @@ type Inbound =
   | { id: string; type: "listSchemas" }
   | { id: string; type: "saveSchema"; input: SaveSchemaRequest }
   | { id: string; type: "schemaRevisions"; schemaId: string }
-  | { id: string; type: "archiveSchema"; schemaId: string };
+  | { id: string; type: "archiveSchema"; schemaId: string }
+  | { id: string; type: "preferences" }
+  | { id: string; type: "setDefaultBackend"; backendId: string | null };
 
 type Outbound =
   | { kind: "event"; event: PipelineEvent }
@@ -194,15 +197,27 @@ const inspect = async (source: string): Promise<SourceInspection> => {
   }
 };
 
+const preferences = (): Preferences => ({
+  defaultBackendId: withDb((db) => createSettingsStore(db).get("default_backend")),
+});
+
+const setDefaultBackend = (backendId: string | null): Preferences => {
+  withDb((db) => createSettingsStore(db).set("default_backend", backendId));
+  return preferences();
+};
+
 const doctor = async (): Promise<unknown> => {
   const probe = makeBinaryProbe(paths, realExec);
-  return runDoctor({
+  const report = await runDoctor({
     paths,
     dependencies: DEPENDENCIES,
     probeBinary: probe,
     backends: buildBackends({ exec: realExec, paths }),
     probeAsr: makeAsrProbe(buildAsrStrategies({ exec: realExec, paths }), paths),
   });
+  // The choice rides along with the probe that found the candidates: two round
+  // trips would let the panel paint a default that the next answer contradicts.
+  return { ...report, ...preferences() };
 };
 
 const extract = async (request: ExtractRequest): Promise<unknown> => {
@@ -247,10 +262,19 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
 
     const tuning = { effort: "low" as const };
     const backends = buildBackends({ exec: realExec, paths, tuning });
-    const backend =
-      request.backendId === null
-        ? await selectBackend(backends, { images: false })
-        : (backends.find((b) => b.id === request.backendId) ?? null);
+    // Explicit request first, then the stored default, then whatever answers.
+    // The stored default is a preference, not a promise: if the user chose
+    // Ollama and then quit Ollama, the run proceeds on something that works
+    // rather than failing to honour a setting.
+    const chosen = request.backendId ?? preferences().defaultBackendId;
+    const preferred = chosen === null ? null : (backends.find((b) => b.id === chosen) ?? null);
+    // Probed, not assumed: every backend is in the registry whether or not it
+    // answers, so picking one by id alone would hand the run a dead server.
+    const reachable =
+      preferred !== null && (await preferred.detect().catch(() => ({ available: false }))).available
+        ? preferred
+        : null;
+    const backend = reachable ?? (await selectBackend(backends, { images: false }));
     if (backend === null) {
       throw asLirovoError(new Error("no inference backend available"), "NO_INFERENCE_BACKEND");
     }
@@ -313,6 +337,10 @@ const handle = async (message: Inbound): Promise<unknown> => {
       return withDb((db) => createSchemaStore(db).save(message.input));
     case "schemaRevisions":
       return withDb((db) => createSchemaStore(db).revisions(message.schemaId));
+    case "preferences":
+      return preferences();
+    case "setDefaultBackend":
+      return setDefaultBackend(message.backendId);
     case "archiveSchema":
       return withDb((db) => {
         createSchemaStore(db).archive(message.schemaId);

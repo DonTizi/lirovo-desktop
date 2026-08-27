@@ -37,6 +37,14 @@ export const saveSchemaRequestSchema = z.object({
 
 export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 
+/** Null clears the choice and returns the app to picking the first available. */
+export const defaultBackendSchema = z.object({ backendId: z.string().min(1).nullable() });
+
+export interface Preferences {
+  /** Which model runs the next extraction, when the user has said. */
+  readonly defaultBackendId: string | null;
+}
+
 export interface SourceInspection {
   readonly kind: "url" | "file";
   /** youtube | vimeo | loom | url, or the file extension. */
@@ -72,6 +80,8 @@ export const CHANNELS = {
   saveSchema: "lirovo:save-schema",
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
+  preferences: "lirovo:preferences",
+  setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event",
 } as const;
 

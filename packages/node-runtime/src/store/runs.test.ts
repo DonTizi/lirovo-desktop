@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import type { SourceManifest } from "@lirovo/contracts";
 import { openMemoryDatabase, type Db } from "./db.js";
+import { MIGRATIONS } from "./migrations.js";
 import { createRunStore, type RunStore } from "./runs.js";
 
 const manifest = (sha: string | null, title = "talk"): SourceManifest => ({
@@ -24,7 +25,9 @@ describe("run store", () => {
   });
 
   it("applies the schema and records its version", () => {
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    // Pinned to the migration list rather than to a literal: the assertion is
+    // that every migration ran, not that there happen to be N of them.
+    expect(db.pragma("user_version", { simple: true })).toBe(MIGRATIONS.length);
   });
 
   describe("source identity", () => {

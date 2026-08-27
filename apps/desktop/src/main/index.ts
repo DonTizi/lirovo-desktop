@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
 import {
   CHANNELS,
+  defaultBackendSchema,
   extractRequestSchema,
   inspectRequestSchema,
   runIdSchema,
@@ -154,6 +155,12 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.archiveSchema,
     guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
+  );
+
+  ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
+  ipcMain.handle(
+    CHANNELS.setDefaultBackend,
+    guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),
   );
 
   ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));

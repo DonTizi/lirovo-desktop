@@ -201,4 +201,17 @@ export const MIGRATIONS: readonly Migration[] = [
          GROUP BY observation_id`,
     ],
   },
+  {
+    version: 2,
+    statements: [
+      // Preferences shared by every surface. One row per key so a new one costs
+      // an INSERT rather than a migration, and `updated_at` so a future sync
+      // can tell which side moved last.
+      `CREATE TABLE settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+    ],
+  },
 ];

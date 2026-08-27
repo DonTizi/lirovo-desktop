@@ -378,7 +378,22 @@ export const App = (): JSX.Element => {
               </div>
 
               <div className="mt-8">
-                <SystemPanel report={system} onRecheck={() => void check()} checking={checking} />
+                <SystemPanel
+                  report={system}
+                  onRecheck={() => void check()}
+                  onChooseBackend={(backendId) => {
+                    // Painted immediately, then confirmed: a click that waits
+                    // on a round trip before the check moves reads as broken.
+                    setSystem((current) => (current === null ? current : { ...current, defaultBackendId: backendId }));
+                    void window.lirovo.setDefaultBackend(backendId).then((answer) => {
+                      if (!answer.ok) return;
+                      setSystem((current) =>
+                        current === null ? current : { ...current, defaultBackendId: answer.value.defaultBackendId },
+                      );
+                    });
+                  }}
+                  checking={checking}
+                />
               </div>
 
               <div className="mt-10 grid gap-8 lg:grid-cols-3">

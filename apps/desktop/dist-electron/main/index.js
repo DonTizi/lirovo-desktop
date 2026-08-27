@@ -1,7 +1,7 @@
 import { randomUUID as Je } from "node:crypto";
 import te from "node:path";
 import { fileURLToPath as He } from "node:url";
-import { app as ne, ipcMain as A, BrowserWindow as Le, shell as Ye, dialog as Ge, utilityProcess as Qe } from "electron";
+import { app as ne, ipcMain as C, BrowserWindow as De, shell as Ye, dialog as Ge, utilityProcess as Qe } from "electron";
 var _;
 (function(n) {
   n.assertEqual = (r) => {
@@ -68,7 +68,7 @@ const u = _.arrayToEnum([
   "never",
   "map",
   "set"
-]), D = (n) => {
+]), L = (n) => {
   switch (typeof n) {
     case "undefined":
       return u.undefined;
@@ -107,7 +107,7 @@ const u = _.arrayToEnum([
   "not_multiple_of",
   "not_finite"
 ]);
-class L extends Error {
+class D extends Error {
   get errors() {
     return this.issues;
   }
@@ -144,7 +144,7 @@ class L extends Error {
     return r(this), s;
   }
   static assert(e) {
-    if (!(e instanceof L))
+    if (!(e instanceof D))
       throw new Error(`Not a ZodError: ${e}`);
   }
   toString() {
@@ -170,7 +170,7 @@ class L extends Error {
     return this.flatten();
   }
 }
-L.create = (n) => new L(n);
+D.create = (n) => new D(n);
 const pe = (n, e) => {
   let t;
   switch (n.code) {
@@ -313,7 +313,7 @@ class S {
 }
 const p = Object.freeze({
   status: "aborted"
-}), Q = (n) => ({ status: "dirty", value: n }), I = (n) => ({ status: "valid", value: n }), Ie = (n) => n.status === "aborted", Ae = (n) => n.status === "dirty", H = (n) => n.status === "valid", se = (n) => typeof Promise < "u" && n instanceof Promise;
+}), Q = (n) => ({ status: "dirty", value: n }), R = (n) => ({ status: "valid", value: n }), Ie = (n) => n.status === "aborted", Ae = (n) => n.status === "dirty", H = (n) => n.status === "valid", se = (n) => typeof Promise < "u" && n instanceof Promise;
 var h;
 (function(n) {
   n.errToObj = (e) => typeof e == "string" ? { message: e } : e || {}, n.toString = (e) => typeof e == "string" ? e : e == null ? void 0 : e.message;
@@ -336,7 +336,7 @@ const Oe = (n, e) => {
     get error() {
       if (this._error)
         return this._error;
-      const t = new L(n.common.issues);
+      const t = new D(n.common.issues);
       return this._error = t, this._error;
     }
   };
@@ -357,13 +357,13 @@ class v {
     return this._def.description;
   }
   _getType(e) {
-    return D(e.data);
+    return L(e.data);
   }
   _getOrReturnCtx(e, t) {
     return t || {
       common: e.parent.common,
       data: e.data,
-      parsedType: D(e.data),
+      parsedType: L(e.data),
       schemaErrorMap: this._def.errorMap,
       path: e.path,
       parent: e.parent
@@ -375,7 +375,7 @@ class v {
       ctx: {
         common: e.parent.common,
         data: e.data,
-        parsedType: D(e.data),
+        parsedType: L(e.data),
         schemaErrorMap: this._def.errorMap,
         path: e.path,
         parent: e.parent
@@ -409,7 +409,7 @@ class v {
       schemaErrorMap: this._def.errorMap,
       parent: null,
       data: e,
-      parsedType: D(e)
+      parsedType: L(e)
     }, r = this._parseSync({ data: e, path: s.path, parent: s });
     return Oe(s, r);
   }
@@ -424,7 +424,7 @@ class v {
       schemaErrorMap: this._def.errorMap,
       parent: null,
       data: e,
-      parsedType: D(e)
+      parsedType: L(e)
     };
     if (!this["~standard"].async)
       try {
@@ -463,7 +463,7 @@ class v {
       schemaErrorMap: this._def.errorMap,
       parent: null,
       data: e,
-      parsedType: D(e)
+      parsedType: L(e)
     }, r = this._parse({ data: e, path: s.path, parent: s }), a = await (se(r) ? r : Promise.resolve(r));
     return Oe(s, a);
   }
@@ -573,7 +573,7 @@ class v {
 }
 const tt = /^c[^\s-]{8,}$/i, nt = /^[0-9a-z]+$/, st = /^[0-9A-HJKMNP-TV-Z]{26}$/i, rt = /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/i, at = /^[a-z0-9_-]{21}$/i, it = /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/, ot = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/, dt = /^(?!\.)(?!.*\.\.)([A-Z0-9_'+\-\.]*)[A-Z0-9_+-]@([A-Z0-9][A-Z0-9\-]*\.)+[A-Z]{2,}$/i, ct = "^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$";
 let fe;
-const lt = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/, ut = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/, ht = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/, ft = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/, mt = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/, pt = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/, De = "((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))", gt = new RegExp(`^${De}$`);
+const lt = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/, ut = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/, ht = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/, ft = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/, mt = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/, pt = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/, Le = "((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))", gt = new RegExp(`^${Le}$`);
 function ze(n) {
   let e = "[0-5]\\d";
   n.precision ? e = `${e}\\.\\d{${n.precision}}` : n.precision == null && (e = `${e}(\\.\\d+)?`);
@@ -584,14 +584,14 @@ function yt(n) {
   return new RegExp(`^${ze(n)}$`);
 }
 function vt(n) {
-  let e = `${De}T${ze(n)}`;
+  let e = `${Le}T${ze(n)}`;
   const t = [];
   return t.push(n.local ? "Z?" : "Z"), n.offset && t.push("([+-]\\d{2}:?\\d{2})"), e = `${e}(${t.join("|")})`, new RegExp(`^${e}$`);
 }
 function _t(n, e) {
   return !!((e === "v4" || !e) && lt.test(n) || (e === "v6" || !e) && ht.test(n));
 }
-function xt(n, e) {
+function kt(n, e) {
   if (!it.test(n))
     return !1;
   try {
@@ -604,7 +604,7 @@ function xt(n, e) {
     return !1;
   }
 }
-function kt(n, e) {
+function xt(n, e) {
   return !!((e === "v4" || !e) && ut.test(n) || (e === "v6" || !e) && ft.test(n));
 }
 class M extends v {
@@ -743,11 +743,11 @@ class M extends v {
         validation: "ip",
         code: d.invalid_string,
         message: a.message
-      }), s.dirty()) : a.kind === "jwt" ? xt(e.data, a.alg) || (r = this._getOrReturnCtx(e, r), l(r, {
+      }), s.dirty()) : a.kind === "jwt" ? kt(e.data, a.alg) || (r = this._getOrReturnCtx(e, r), l(r, {
         validation: "jwt",
         code: d.invalid_string,
         message: a.message
-      }), s.dirty()) : a.kind === "cidr" ? kt(e.data, a.version) || (r = this._getOrReturnCtx(e, r), l(r, {
+      }), s.dirty()) : a.kind === "cidr" ? xt(e.data, a.version) || (r = this._getOrReturnCtx(e, r), l(r, {
         validation: "cidr",
         code: d.invalid_string,
         message: a.message
@@ -1309,7 +1309,7 @@ class ge extends v {
         received: s.parsedType
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
 }
 ge.create = (n) => new ge({
@@ -1405,7 +1405,7 @@ class Re extends v {
         received: s.parsedType
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
 }
 Re.create = (n) => new Re({
@@ -1422,7 +1422,7 @@ class ye extends v {
         received: s.parsedType
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
 }
 ye.create = (n) => new ye({
@@ -1439,7 +1439,7 @@ class ve extends v {
         received: s.parsedType
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
 }
 ve.create = (n) => new ve({
@@ -1451,7 +1451,7 @@ class Ne extends v {
     super(...arguments), this._any = !0;
   }
   _parse(e) {
-    return I(e.data);
+    return R(e.data);
   }
 }
 Ne.create = (n) => new Ne({
@@ -1463,7 +1463,7 @@ class _e extends v {
     super(...arguments), this._unknown = !0;
   }
   _parse(e) {
-    return I(e.data);
+    return R(e.data);
   }
 }
 _e.create = (n) => new _e({
@@ -1494,7 +1494,7 @@ class Ze extends v {
         received: s.parsedType
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
 }
 Ze.create = (n) => new Ze({
@@ -1615,20 +1615,20 @@ class w extends v {
         i.includes(m) || o.push(m);
     const f = [];
     for (const m of i) {
-      const x = a[m], G = r.data[m];
+      const k = a[m], G = r.data[m];
       f.push({
         key: { status: "valid", value: m },
-        value: x._parse(new $(r, G, r.path, m)),
+        value: k._parse(new $(r, G, r.path, m)),
         alwaysSet: m in r.data
       });
     }
     if (this._def.catchall instanceof U) {
       const m = this._def.unknownKeys;
       if (m === "passthrough")
-        for (const x of o)
+        for (const k of o)
           f.push({
-            key: { status: "valid", value: x },
-            value: { status: "valid", value: r.data[x] }
+            key: { status: "valid", value: k },
+            value: { status: "valid", value: r.data[k] }
           });
       else if (m === "strict")
         o.length > 0 && (l(r, {
@@ -1638,26 +1638,26 @@ class w extends v {
       else if (m !== "strip") throw new Error("Internal ZodObject error: invalid unknownKeys value.");
     } else {
       const m = this._def.catchall;
-      for (const x of o) {
-        const G = r.data[x];
+      for (const k of o) {
+        const G = r.data[k];
         f.push({
-          key: { status: "valid", value: x },
+          key: { status: "valid", value: k },
           value: m._parse(
-            new $(r, G, r.path, x)
+            new $(r, G, r.path, k)
             //, ctx.child(key), value, getParsedType(value)
           ),
-          alwaysSet: x in r.data
+          alwaysSet: k in r.data
         });
       }
     }
     return r.common.async ? Promise.resolve().then(async () => {
       const m = [];
-      for (const x of f) {
-        const G = await x.key, qe = await x.value;
+      for (const k of f) {
+        const G = await k.key, qe = await k.value;
         m.push({
           key: G,
           value: qe,
-          alwaysSet: x.alwaysSet
+          alwaysSet: k.alwaysSet
         });
       }
       return m;
@@ -1888,7 +1888,7 @@ class ae extends v {
       for (const o of a)
         if (o.result.status === "dirty")
           return t.common.issues.push(...o.ctx.common.issues), o.result;
-      const i = a.map((o) => new L(o.ctx.common.issues));
+      const i = a.map((o) => new D(o.ctx.common.issues));
       return l(t, {
         code: d.invalid_union,
         unionErrors: i
@@ -1924,18 +1924,18 @@ class ae extends v {
             issues: []
           },
           parent: null
-        }, x = f._parseSync({
+        }, k = f._parseSync({
           data: t.data,
           path: t.path,
           parent: m
         });
-        if (x.status === "valid")
-          return x;
-        x.status === "dirty" && !a && (a = { result: x, ctx: m }), m.common.issues.length && i.push(m.common.issues);
+        if (k.status === "valid")
+          return k;
+        k.status === "dirty" && !a && (a = { result: k, ctx: m }), m.common.issues.length && i.push(m.common.issues);
       }
       if (a)
         return t.common.issues.push(...a.ctx.common.issues), a.result;
-      const o = i.map((f) => new L(f));
+      const o = i.map((f) => new D(f));
       return l(t, {
         code: d.invalid_union,
         unionErrors: o
@@ -1951,7 +1951,7 @@ ae.create = (n, e) => new ae({
   typeName: g.ZodUnion,
   ...y(e)
 });
-const V = (n) => n instanceof ke ? V(n.schema) : n instanceof W ? V(n.innerType()) : n instanceof de ? [n.value] : n instanceof F ? n.options : n instanceof be ? _.objectValues(n.enum) : n instanceof le ? V(n._def.innerType) : n instanceof ye ? [void 0] : n instanceof ve ? [null] : n instanceof P ? [void 0, ...V(n.unwrap())] : n instanceof q ? [null, ...V(n.unwrap())] : n instanceof Be || n instanceof he ? V(n.unwrap()) : n instanceof ue ? V(n._def.innerType) : [];
+const V = (n) => n instanceof xe ? V(n.schema) : n instanceof W ? V(n.innerType()) : n instanceof de ? [n.value] : n instanceof F ? n.options : n instanceof be ? _.objectValues(n.enum) : n instanceof le ? V(n._def.innerType) : n instanceof ye ? [void 0] : n instanceof ve ? [null] : n instanceof P ? [void 0, ...V(n.unwrap())] : n instanceof q ? [null, ...V(n.unwrap())] : n instanceof Be || n instanceof he ? V(n.unwrap()) : n instanceof ue ? V(n._def.innerType) : [];
 class Se extends v {
   _parse(e) {
     const { ctx: t } = this._processInputParams(e);
@@ -2014,14 +2014,14 @@ class Se extends v {
     });
   }
 }
-function xe(n, e) {
-  const t = D(n), s = D(e);
+function ke(n, e) {
+  const t = L(n), s = L(e);
   if (n === e)
     return { valid: !0, data: n };
   if (t === u.object && s === u.object) {
     const r = _.objectKeys(e), a = _.objectKeys(n).filter((o) => r.indexOf(o) !== -1), i = { ...n, ...e };
     for (const o of a) {
-      const f = xe(n[o], e[o]);
+      const f = ke(n[o], e[o]);
       if (!f.valid)
         return { valid: !1 };
       i[o] = f.data;
@@ -2032,7 +2032,7 @@ function xe(n, e) {
       return { valid: !1 };
     const r = [];
     for (let a = 0; a < n.length; a++) {
-      const i = n[a], o = e[a], f = xe(i, o);
+      const i = n[a], o = e[a], f = ke(i, o);
       if (!f.valid)
         return { valid: !1 };
       r.push(f.data);
@@ -2045,7 +2045,7 @@ class ie extends v {
     const { status: t, ctx: s } = this._processInputParams(e), r = (a, i) => {
       if (Ie(a) || Ie(i))
         return p;
-      const o = xe(a.value, i.value);
+      const o = ke(a.value, i.value);
       return o.valid ? ((Ae(a) || Ae(i)) && t.dirty(), { status: t.value, value: o.data }) : (l(s, {
         code: d.invalid_intersection_types
       }), p);
@@ -2192,20 +2192,20 @@ class Ee extends v {
       const o = /* @__PURE__ */ new Map();
       return Promise.resolve().then(async () => {
         for (const f of i) {
-          const m = await f.key, x = await f.value;
-          if (m.status === "aborted" || x.status === "aborted")
+          const m = await f.key, k = await f.value;
+          if (m.status === "aborted" || k.status === "aborted")
             return p;
-          (m.status === "dirty" || x.status === "dirty") && t.dirty(), o.set(m.value, x.value);
+          (m.status === "dirty" || k.status === "dirty") && t.dirty(), o.set(m.value, k.value);
         }
         return { status: t.value, value: o };
       });
     } else {
       const o = /* @__PURE__ */ new Map();
       for (const f of i) {
-        const m = f.key, x = f.value;
-        if (m.status === "aborted" || x.status === "aborted")
+        const m = f.key, k = f.value;
+        if (m.status === "aborted" || k.status === "aborted")
           return p;
-        (m.status === "dirty" || x.status === "dirty") && t.dirty(), o.set(m.value, x.value);
+        (m.status === "dirty" || k.status === "dirty") && t.dirty(), o.set(m.value, k.value);
       }
       return { status: t.value, value: o };
     }
@@ -2245,10 +2245,10 @@ class ee extends v {
     const a = this._def.valueType;
     function i(f) {
       const m = /* @__PURE__ */ new Set();
-      for (const x of f) {
-        if (x.status === "aborted")
+      for (const k of f) {
+        if (k.status === "aborted")
           return p;
-        x.status === "dirty" && t.dirty(), m.add(x.value);
+        k.status === "dirty" && t.dirty(), m.add(k.value);
       }
       return { status: t.value, value: m };
     }
@@ -2281,7 +2281,7 @@ ee.create = (n, e) => new ee({
   typeName: g.ZodSet,
   ...y(e)
 });
-class ke extends v {
+class xe extends v {
   get schema() {
     return this._def.getter();
   }
@@ -2290,7 +2290,7 @@ class ke extends v {
     return this._def.getter()._parse({ data: t.data, path: t.path, parent: t });
   }
 }
-ke.create = (n, e) => new ke({
+xe.create = (n, e) => new xe({
   getter: n,
   typeName: g.ZodLazy,
   ...y(e)
@@ -2341,7 +2341,7 @@ class F extends v {
         options: s
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
   get options() {
     return this._def.values;
@@ -2397,7 +2397,7 @@ class be extends v {
         options: r
       }), p;
     }
-    return I(e.data);
+    return R(e.data);
   }
   get enum() {
     return this._def.values;
@@ -2421,7 +2421,7 @@ class ce extends v {
         received: t.parsedType
       }), p;
     const s = t.parsedType === u.promise ? t.data : Promise.resolve(t.data);
-    return I(s.then((r) => this._def.type.parseAsync(r, {
+    return R(s.then((r) => this._def.type.parseAsync(r, {
       path: t.path,
       errorMap: t.common.contextualErrorMap
     })));
@@ -2526,7 +2526,7 @@ W.createWithPreprocess = (n, e, t) => new W({
 });
 class P extends v {
   _parse(e) {
-    return this._getType(e) === u.undefined ? I(void 0) : this._def.innerType._parse(e);
+    return this._getType(e) === u.undefined ? R(void 0) : this._def.innerType._parse(e);
   }
   unwrap() {
     return this._def.innerType;
@@ -2539,7 +2539,7 @@ P.create = (n, e) => new P({
 });
 class q extends v {
   _parse(e) {
-    return this._getType(e) === u.null ? I(null) : this._def.innerType._parse(e);
+    return this._getType(e) === u.null ? R(null) : this._def.innerType._parse(e);
   }
   unwrap() {
     return this._def.innerType;
@@ -2589,7 +2589,7 @@ class ue extends v {
       status: "valid",
       value: a.status === "valid" ? a.value : this._def.catchValue({
         get error() {
-          return new L(s.common.issues);
+          return new D(s.common.issues);
         },
         input: s.data
       })
@@ -2597,7 +2597,7 @@ class ue extends v {
       status: "valid",
       value: r.status === "valid" ? r.value : this._def.catchValue({
         get error() {
-          return new L(s.common.issues);
+          return new D(s.common.issues);
         },
         input: s.data
       })
@@ -2703,12 +2703,12 @@ var g;
 })(g || (g = {}));
 const c = M.create, b = Y.create, $e = ge.create, Fe = _e.create;
 U.create;
-const wt = j.create, k = w.create;
+const wt = j.create, x = w.create;
 ae.create;
 const We = Se.create;
 ie.create;
 B.create;
-const me = oe.create, T = de.create, R = F.create;
+const me = oe.create, A = de.create, N = F.create;
 ce.create;
 P.create;
 q.create;
@@ -2721,41 +2721,41 @@ const St = [
   "vision",
   "graph",
   "reason"
-], Z = R(St), Tt = We("type", [
-  k({ type: T("run:start"), runId: c(), at: b() }),
-  k({ type: T("stage:start"), runId: c(), stage: Z, attempt: b().int().min(1) }),
-  k({ type: T("stage:resumed"), runId: c(), stage: Z }),
+], Z = N(St), Tt = We("type", [
+  x({ type: A("run:start"), runId: c(), at: b() }),
+  x({ type: A("stage:start"), runId: c(), stage: Z, attempt: b().int().min(1) }),
+  x({ type: A("stage:resumed"), runId: c(), stage: Z }),
   // A stage that will never run for THIS source — no frames to dedup, no
   // backend to see them. Distinct from "waiting", which a user reads as
   // "still to come" and which never resolves.
-  k({ type: T("stage:skipped"), runId: c(), stage: Z, why: c() }),
-  k({
-    type: T("stage:progress"),
+  x({ type: A("stage:skipped"), runId: c(), stage: Z, why: c() }),
+  x({
+    type: A("stage:progress"),
     runId: c(),
     stage: Z,
     done: b().int().min(0),
     total: b().int().min(0),
     note: c().optional()
   }),
-  k({ type: T("stage:done"), runId: c(), stage: Z, ms: b().min(0) }),
-  k({
-    type: T("stage:degraded"),
+  x({ type: A("stage:done"), runId: c(), stage: Z, ms: b().min(0) }),
+  x({
+    type: A("stage:degraded"),
     runId: c(),
     stage: Z,
     code: c(),
     message: c()
   }),
-  k({ type: T("run:done"), runId: c(), ms: b().min(0) }),
-  k({
-    type: T("run:failed"),
+  x({ type: A("run:done"), runId: c(), ms: b().min(0) }),
+  x({
+    type: A("run:failed"),
     runId: c(),
     stage: Z.nullable(),
     code: c(),
     message: c()
   }),
-  k({ type: T("run:cancelled"), runId: c(), stage: Z.nullable() })
-]), Ct = R(["url", "file"]), It = R(["claimed", "running", "succeeded", "failed", "cancelled"]), At = R(["audio", "visual", "both"]);
-k({
+  x({ type: A("run:cancelled"), runId: c(), stage: Z.nullable() })
+]), Ct = N(["url", "file"]), It = N(["claimed", "running", "succeeded", "failed", "cancelled"]), At = N(["audio", "visual", "both"]);
+x({
   id: c(),
   kind: Ct,
   uri: c(),
@@ -2766,7 +2766,7 @@ k({
   hasVideo: $e(),
   createdAt: b().int()
 });
-k({
+x({
   id: c(),
   sourceId: c(),
   schemaRevisionId: c().nullable(),
@@ -2780,18 +2780,18 @@ k({
   startedAt: b().int().nullable(),
   finishedAt: b().int().nullable()
 });
-k({
+x({
   runId: c(),
   stage: Z,
   attempt: b().int().min(1),
   inputHash: c(),
-  status: R(["running", "done", "failed", "degraded"]),
+  status: N(["running", "done", "failed", "degraded"]),
   errorCode: c().nullable(),
   errorMessage: c().nullable(),
   startedAt: b().int(),
   finishedAt: b().int().nullable()
 });
-k({
+x({
   id: c(),
   runId: c(),
   kind: c(),
@@ -2801,7 +2801,7 @@ k({
   contentType: c(),
   createdAt: b().int()
 });
-k({
+x({
   id: c(),
   runId: c(),
   modality: At,
@@ -2811,7 +2811,7 @@ k({
   quote: c().nullable(),
   nodeKey: c().nullable()
 });
-k({
+x({
   observationId: c(),
   runId: c(),
   fieldPath: c(),
@@ -2820,27 +2820,27 @@ k({
   retractsObservationId: c().nullable(),
   createdAt: b().int()
 });
-k({
+x({
   observationId: c(),
-  evidenceCoverage: R(["none", "single", "multiple"]),
+  evidenceCoverage: N(["none", "single", "multiple"]),
   evidenceModalities: b().int().min(0).max(2),
-  evidenceQuality: R(["verbatim", "ocr_uncertain", "inferred"]),
-  consistency: R(["agree", "conflict", "retracted"]),
-  mappingStatus: R(["matched", "provisional", "unmapped"]),
+  evidenceQuality: N(["verbatim", "ocr_uncertain", "inferred"]),
+  consistency: N(["agree", "conflict", "retracted"]),
+  mappingStatus: N(["matched", "provisional", "unmapped"]),
   /** Queue order only. Higher means "a human should look sooner". Never shown as a percentage. */
   reviewPriority: b().int(),
   priorityVersion: b().int().min(1)
 });
-k({
+x({
   id: c(),
   observationId: c(),
-  decision: R(["approved", "rejected", "reopened"]),
+  decision: N(["approved", "rejected", "reopened"]),
   actor: c(),
   note: c().nullable(),
   schemaRevisionId: c().nullable(),
   createdAt: b().int()
 });
-k({
+x({
   runId: c(),
   sourceSha256: c().nullable(),
   schemaRevisionId: c().nullable(),
@@ -2855,32 +2855,32 @@ k({
   settings: me(c(), Fe()),
   createdAt: b().int()
 });
-const Ot = k({
+const Ot = x({
   source: c().min(1),
   schemaJson: c().nullable(),
   backendId: c().nullable(),
   /** Which stored revision this run was asked with, when it came from one. */
   schemaRevisionId: c().nullable().optional()
-}), Rt = k({ runId: c().min(1) }), Nt = k({ source: c().min(1) }), Zt = k({
+}), Rt = x({ runId: c().min(1) }), Nt = x({ source: c().min(1) }), Zt = x({
   name: c(),
-  kind: R(["text", "list", "number", "date"]),
+  kind: N(["text", "list", "number", "date"]),
   description: c().optional()
-}), Et = k({
+}), Et = x({
   schemaId: c().optional(),
   name: c().min(1),
   description: c().optional(),
   fields: wt(Zt)
-}), Ve = k({ schemaId: c().min(1) });
+}), Ve = x({ schemaId: c().min(1) }), jt = x({ backendId: c().min(1).nullable() });
 We("kind", [
-  k({ kind: T("event"), event: Tt }),
-  k({ kind: T("done"), runId: c(), summary: Fe() }),
-  k({
-    kind: T("failed"),
+  x({ kind: A("event"), event: Tt }),
+  x({ kind: A("done"), runId: c(), summary: Fe() }),
+  x({
+    kind: A("failed"),
     runId: c(),
-    error: k({ code: c(), message: c() })
+    error: x({ code: c(), message: c() })
   })
 ]);
-const C = {
+const T = {
   doctor: "lirovo:doctor",
   extract: "lirovo:extract",
   cancel: "lirovo:cancel",
@@ -2892,15 +2892,17 @@ const C = {
   saveSchema: "lirovo:save-schema",
   schemaRevisions: "lirovo:schema-revisions",
   archiveSchema: "lirovo:archive-schema",
+  preferences: "lirovo:preferences",
+  setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event"
 }, we = te.dirname(He(import.meta.url)), Me = process.env.VITE_DEV_SERVER_URL;
 let E = null, z = null;
-const X = /* @__PURE__ */ new Map(), jt = () => {
+const X = /* @__PURE__ */ new Map(), $t = () => {
   const n = Qe.fork(te.join(we, "engine-host.js"), [], { stdio: "inherit" });
   return n.on("message", (e) => {
     const t = e;
     if (t.kind === "event") {
-      E == null || E.webContents.send(C.engineEvent, t.event);
+      E == null || E.webContents.send(T.engineEvent, t.event);
       return;
     }
     const s = X.get(t.id);
@@ -2910,20 +2912,20 @@ const X = /* @__PURE__ */ new Map(), jt = () => {
       e.reject(new Error("the engine process stopped"));
     X.clear(), z = null;
   }), n;
-}, N = (n) => {
-  z ?? (z = jt());
+}, O = (n) => {
+  z ?? (z = $t());
   const e = Je();
   return new Promise((t, s) => {
     X.set(e, { resolve: t, reject: s }), z == null || z.postMessage({ id: e, ...n });
   });
-}, $t = async (n) => {
+}, Vt = async (n) => {
   try {
     return { ok: !0, value: await n() };
   } catch (e) {
     return { ok: !1, error: { code: e.code ?? "INTERNAL", message: e instanceof Error ? e.message : String(e) } };
   }
 }, Pe = () => {
-  E = new Le({
+  E = new De({
     width: 1180,
     height: 800,
     minWidth: 900,
@@ -2939,29 +2941,32 @@ const X = /* @__PURE__ */ new Map(), jt = () => {
   }), E.webContents.setWindowOpenHandler(({ url: n }) => (/^https?:\/\//i.test(n) && Ye.openExternal(n), { action: "deny" })), E.webContents.on("will-navigate", (n) => n.preventDefault()), Me !== void 0 ? E.loadURL(Me) : E.loadFile(te.join(we, "../../dist/index.html")), E.on("closed", () => {
     E = null;
   });
-}, Vt = (n) => n.senderFrame !== null && n.senderFrame.parent === null, O = (n) => async (e, t) => Vt(e) ? $t(() => n(t)) : { ok: !1, error: { code: "FORBIDDEN", message: "not the main frame" } };
+}, Mt = (n) => n.senderFrame !== null && n.senderFrame.parent === null, I = (n) => async (e, t) => Mt(e) ? Vt(() => n(t)) : { ok: !1, error: { code: "FORBIDDEN", message: "not the main frame" } };
 ne.whenReady().then(() => {
-  A.handle(C.doctor, O(() => N({ type: "doctor" }))), A.handle(C.listRuns, O(() => N({ type: "listRuns" }))), A.handle(
-    C.runDetail,
-    O((n) => N({ type: "runDetail", runId: Rt.parse(n).runId }))
-  ), A.handle(
-    C.extract,
-    O((n) => N({ type: "extract", request: Ot.parse(n) }))
-  ), A.handle(
-    C.inspect,
-    O((n) => N({ type: "inspect", source: Nt.parse(n).source }))
-  ), A.handle(C.listSchemas, O(() => N({ type: "listSchemas" }))), A.handle(
-    C.saveSchema,
-    O((n) => N({ type: "saveSchema", input: Et.parse(n) }))
-  ), A.handle(
-    C.schemaRevisions,
-    O((n) => N({ type: "schemaRevisions", schemaId: Ve.parse(n).schemaId }))
-  ), A.handle(
-    C.archiveSchema,
-    O((n) => N({ type: "archiveSchema", schemaId: Ve.parse(n).schemaId }))
-  ), A.handle(C.cancel, O(() => N({ type: "cancel" }))), A.handle(
-    C.pickFile,
-    O(async () => {
+  C.handle(T.doctor, I(() => O({ type: "doctor" }))), C.handle(T.listRuns, I(() => O({ type: "listRuns" }))), C.handle(
+    T.runDetail,
+    I((n) => O({ type: "runDetail", runId: Rt.parse(n).runId }))
+  ), C.handle(
+    T.extract,
+    I((n) => O({ type: "extract", request: Ot.parse(n) }))
+  ), C.handle(
+    T.inspect,
+    I((n) => O({ type: "inspect", source: Nt.parse(n).source }))
+  ), C.handle(T.listSchemas, I(() => O({ type: "listSchemas" }))), C.handle(
+    T.saveSchema,
+    I((n) => O({ type: "saveSchema", input: Et.parse(n) }))
+  ), C.handle(
+    T.schemaRevisions,
+    I((n) => O({ type: "schemaRevisions", schemaId: Ve.parse(n).schemaId }))
+  ), C.handle(
+    T.archiveSchema,
+    I((n) => O({ type: "archiveSchema", schemaId: Ve.parse(n).schemaId }))
+  ), C.handle(T.preferences, I(() => O({ type: "preferences" }))), C.handle(
+    T.setDefaultBackend,
+    I((n) => O({ type: "setDefaultBackend", backendId: jt.parse(n).backendId }))
+  ), C.handle(T.cancel, I(() => O({ type: "cancel" }))), C.handle(
+    T.pickFile,
+    I(async () => {
       const n = await Ge.showOpenDialog({
         properties: ["openFile"],
         filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "mkv", "webm", "m4a", "mp3", "wav", "flac"] }]
@@ -2969,7 +2974,7 @@ ne.whenReady().then(() => {
       return n.canceled ? null : n.filePaths[0] ?? null;
     })
   ), Pe(), ne.on("activate", () => {
-    Le.getAllWindows().length === 0 && Pe();
+    De.getAllWindows().length === 0 && Pe();
   });
 });
 ne.on("window-all-closed", () => {
