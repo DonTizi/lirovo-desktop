@@ -98,8 +98,11 @@ export function RunView({
   // and the answer.
   const finished = detail.status === "succeeded";
 
+  // `lg`, not `xl`: the window opens at 1180px and its minimum is 900, so a
+  // 1280px breakpoint meant the split never applied and the video stacked under
+  // the data at the only size the app is actually used at.
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,38%)] xl:items-start">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,40%)] lg:items-start">
       <div className="grid min-w-0 gap-3">
         <div className="border-hairline flex items-center gap-1 border-b">
           {available.map((p) => (
@@ -143,7 +146,7 @@ export function RunView({
 
       {/* The video stays put while the left column changes. It is the thing
           every pane points at, so it is the thing that must not move. */}
-      <div className="grid gap-3 xl:sticky xl:top-4">
+      <div className="grid gap-3 lg:sticky lg:top-4">
         {loading ? (
           <Skeleton className="h-56 w-full rounded-lg" />
         ) : (
