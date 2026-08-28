@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.2.0...v0.3.0) (2026-08-28)
+
+
+### Added
+
+* **desktop:** make the first screen a welcome, not an audit ([#23](https://github.com/DonTizi/lirovo-desktop/issues/23)) ([4ded466](https://github.com/DonTizi/lirovo-desktop/commit/4ded4668fd5cb542e9a06445153ad0beb4a5b6ad))
+
 ## [0.2.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.1.0...v0.2.0) (2026-08-28)
 
 
