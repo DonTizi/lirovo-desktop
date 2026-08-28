@@ -7,12 +7,16 @@ import {
   Download,
   FolderOpen,
   Loader2,
+  Monitor,
+  Moon,
   MoreHorizontal,
   RefreshCw,
   Search,
+  Sun,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
+import { THEME_CHOICES, applyChoice, type ThemeChoice } from "../lib/theme";
 import type { Fix } from "@lirovo/contracts";
 import { DEFAULT_WHISPER_MODEL_ID, WHISPER_MODELS } from "@lirovo/core";
 import type { Preferences, UpdateState } from "../../bridge/contract.js";
@@ -339,6 +343,66 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
  * downloads it — a radio button that silently does nothing until you find a
  * separate Install elsewhere is two steps pretending to be one.
  */
+/**
+ * Which palette the window wears.
+ *
+ * Three options and not a switch, because there are three states and a switch
+ * can only hold two — the one it would have to drop is `System`, which is the
+ * default and the only one that keeps up when the Mac changes at sunset.
+ *
+ * The click paints immediately and tells the engine afterwards. A theme that
+ * waits on a round trip through SQLite feels broken even when it is fast, and
+ * there is nothing to roll back: if the write fails, the next launch reads the
+ * old value and the window agrees with it again.
+ */
+function Appearance({ chosen }: { chosen: ThemeChoice }): JSX.Element {
+  const [choice, setChoice] = useState<ThemeChoice>(chosen);
+  useEffect(() => setChoice(chosen), [chosen]);
+
+  const LABELS: Record<ThemeChoice, { title: string; about: string; icon: typeof Sun }> = {
+    system: { title: "System", about: "Follows this Mac, including when it changes", icon: Monitor },
+    light: { title: "Light", about: "Always light", icon: Sun },
+    dark: { title: "Dark", about: "Always dark", icon: Moon },
+  };
+
+  return (
+    <Card title="Appearance">
+      {THEME_CHOICES.map((option) => {
+        const on = option === choice;
+        const { title, about, icon: Icon } = LABELS[option];
+        return (
+          <button
+            key={option}
+            onClick={() => {
+              setChoice(option);
+              applyChoice(option);
+              void window.lirovo.setTheme(option);
+            }}
+            className={cn(
+              "border-hairline hover:bg-elevated flex w-full items-center gap-3 border-b px-4 py-2.5 text-left transition-colors last:border-b-0",
+              on && "bg-elevated",
+            )}
+          >
+            <span
+              className={cn(
+                "grid size-4 shrink-0 place-items-center rounded-full border",
+                on ? "border-ink-strong" : "border-line",
+              )}
+            >
+              {on && <span className="bg-ink-strong size-2 rounded-full" />}
+            </span>
+            <Icon className="text-ink-label size-4 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="text-ink-strong block text-[13px] font-medium">{title}</span>
+              <span className="text-ink-subtle block text-xs">{about}</span>
+            </span>
+          </button>
+        );
+      })}
+    </Card>
+  );
+}
+
 function SpeechModel({
   chosen,
   onChosen,
@@ -803,6 +867,7 @@ export function SettingsPage({
             )}
           </Card>
 
+          <Appearance chosen={prefs?.theme ?? "system"} />
           <SpeechModel chosen={prefs?.whisperModelId ?? null} onChosen={onRecheck} />
           <Updates />
         </div>

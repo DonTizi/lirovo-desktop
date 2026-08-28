@@ -63,6 +63,14 @@ export const schemaIdSchema = z.object({ schemaId: z.string().min(1) });
 export const updateChannelSchema = z.object({ channel: z.enum(["latest", "beta"]) });
 
 /**
+ * Which palette, or the machine's.
+ *
+ * An enum, so the value that reaches `nativeTheme.themeSource` is one of three
+ * and not whatever the window sent.
+ */
+export const themeSchema = z.object({ theme: z.enum(["system", "light", "dark"]) });
+
+/**
  * The renderer telling the main process whether a run is in flight.
  *
  * The main process cannot see the engine's state, and the one question it must

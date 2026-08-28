@@ -395,8 +395,16 @@ const preferences = (): Preferences =>
       // never a thing you are moved onto.
       updateChannel: settings.get("update_channel") === "beta" ? "beta" : "latest",
       onboarded: settings.get("onboarded") === "1",
+      // Anything unrecognised — a row from a later version, a corrupted one —
+      // reads as `system`. Following the machine is the answer that is never
+      // surprising; guessing a palette would be.
+      theme: readTheme(settings.get("theme")),
     };
   });
+
+/** The stored string, narrowed. Unknown values follow the machine. */
+const readTheme = (raw: string | null): Preferences["theme"] =>
+  raw === "light" || raw === "dark" ? raw : "system";
 
 /** Set once, by the first-run screen, and never unset from the UI. */
 const markOnboarded = (): Preferences => {
@@ -600,6 +608,11 @@ const handle = async (message: EngineRequest): Promise<unknown> => {
       return preferences();
     case "setUpdateChannel":
       withDb((db) => createSettingsStore(db).set("update_channel", message.channel));
+      return preferences();
+    case "setTheme":
+      // The choice, not the palette it resolves to. Storing "dark" for someone
+      // on `system` would pin them there the first time their Mac was dark.
+      withDb((db) => createSettingsStore(db).set("theme", message.theme));
       return preferences();
     case "setDefaultBackend":
       return setDefaultBackend(message.backendId);
