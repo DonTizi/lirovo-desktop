@@ -239,7 +239,16 @@ app.whenReady().then(() => {
       return { version: currentVersion(), channel: prefs.updateChannel, supported: app.isPackaged };
     }),
   );
-  ipcMain.handle(CHANNELS.updateCheck, guard(() => checkNow()));
+  ipcMain.handle(
+    CHANNELS.updateCheck,
+    guard(async () => {
+      // The channel decides the wording of a failure — "no stable release yet"
+      // only makes sense to someone on stable — so it is read here rather than
+      // guessed inside the updater.
+      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
+      return checkNow(prefs.updateChannel);
+    }),
+  );
   ipcMain.handle(CHANNELS.updateDownload, guard(() => downloadUpdate()));
   ipcMain.handle(CHANNELS.updateInstall, guard(async () => installUpdate(() => !busy)));
   ipcMain.handle(

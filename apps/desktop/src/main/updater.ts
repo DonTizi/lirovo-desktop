@@ -1,5 +1,6 @@
 import { app } from "electron";
 import electronUpdater from "electron-updater";
+import { explainUpdateFailure } from "./update-messages.js";
 
 /**
  * Moving an installed copy forward, without ever taking work away.
@@ -19,7 +20,8 @@ import electronUpdater from "electron-updater";
 
 const { autoUpdater } = electronUpdater;
 
-export type UpdateChannel = "latest" | "beta";
+export type { UpdateChannel } from "./update-messages.js";
+import type { UpdateChannel } from "./update-messages.js";
 
 export type UpdateEvent =
   | { readonly kind: "checking" }
@@ -83,7 +85,12 @@ export const startUpdater = (deps: UpdaterDeps): (() => void) => {
     deps.send({ kind: "progress", percent: Math.round(p.percent), bytesPerSecond: Math.round(p.bytesPerSecond) }),
   );
   autoUpdater.on("update-downloaded", (info) => deps.send({ kind: "ready", version: info.version }));
-  autoUpdater.on("error", (error) => deps.send({ kind: "error", message: error.message }));
+  // Translated here rather than in the window, so every caller — the toast,
+  // the Settings strip, a future one — gets the same sentence instead of each
+  // inventing its own reading of a transport error.
+  autoUpdater.on("error", (error) =>
+    deps.send({ kind: "error", message: explainUpdateFailure(error, deps.channel()) }),
+  );
 
   const check = (): void => {
     // A packaged app only. In development there is no feed to ask and
@@ -103,9 +110,15 @@ export const startUpdater = (deps: UpdaterDeps): (() => void) => {
   };
 };
 
-export const checkNow = async (): Promise<void> => {
+export const checkNow = async (channel: UpdateChannel): Promise<void> => {
   if (!app.isPackaged) throw new Error("updates only exist for an installed copy");
-  await autoUpdater.checkForUpdates();
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    // `checkForUpdates` rejects AND emits `error`, so without this the button's
+    // own rejection path would show the raw text the event path just cleaned up.
+    throw new Error(explainUpdateFailure(error, channel));
+  }
 };
 
 export const downloadUpdate = async (): Promise<void> => {
