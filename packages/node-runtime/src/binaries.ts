@@ -55,6 +55,45 @@ const nvmBinDirs = (env: NodeJS.ProcessEnv): readonly string[] => {
   }
 };
 
+/**
+ * A PATH that can start the tools this app finds.
+ *
+ * Finding a binary is not the same as being able to run it. `codex` is a
+ * `#!/usr/bin/env node` script, so executing it by absolute path still asks the
+ * kernel to resolve `node` through PATH — and on the minimal PATH a
+ * Finder-launched app inherits, that fails with
+ *
+ *     env: node: No such file or directory
+ *
+ * which the probe then reported as "codex not installed". Claude Code masked
+ * the bug by being a native Mach-O binary, which needs no interpreter and
+ * worked all along; the two behaved differently for a reason that had nothing
+ * to do with either of them.
+ *
+ * So anything spawned gets the same directories the resolver searches. The
+ * inherited PATH stays first — a real one, from a terminal or a dev run, still
+ * wins.
+ *
+ * This is a PATH, not an environment: it carries no credentials, so widening it
+ * does not weaken `minimalEnv`, whose job is to keep ambient secrets away from
+ * an agent CLI.
+ */
+export const toolPath = (env: NodeJS.ProcessEnv = process.env): string => {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const dir of [
+    ...(env["PATH"] ?? "").split(path.delimiter),
+    ...HOMEBREW_PREFIXES,
+    ...userBinDirs(env),
+    ...nvmBinDirs(env),
+  ]) {
+    if (dir === "" || seen.has(dir)) continue;
+    seen.add(dir);
+    dirs.push(dir);
+  }
+  return dirs.join(path.delimiter);
+};
+
 const isExecutable = async (candidate: string): Promise<boolean> => {
   try {
     await access(candidate, constants.X_OK);

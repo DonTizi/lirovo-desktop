@@ -1,6 +1,7 @@
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { toolPath } from "../../binaries.js";
 
 /**
  * The environment an agent CLI is allowed to see.
@@ -21,12 +22,23 @@ import path from "node:path";
  * experimental.
  */
 export const minimalEnv = (env: NodeJS.ProcessEnv = process.env): Record<string, string> => {
-  const keep = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "USER"];
+  const keep = ["HOME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "USER"];
   const out: Record<string, string> = {};
   for (const key of keep) {
     const value = env[key];
     if (value !== undefined) out[key] = value;
   }
+  // Not the inherited PATH: the one the resolver searches.
+  //
+  // `codex` is a `#!/usr/bin/env node` script, so running it — even by absolute
+  // path — asks the kernel to find `node` through PATH. On the minimal PATH a
+  // Finder-launched app inherits that fails with "env: node: No such file or
+  // directory", and the probe reported it as codex not being installed. Claude
+  // Code hid the bug by being a native binary that needs no interpreter.
+  //
+  // Widening PATH does not weaken this function: a PATH carries no credentials,
+  // and keeping secrets out of the environment is what the list above is for.
+  out["PATH"] = toolPath(env);
   // Agent CLIs are chattier and slower when they think a human is watching.
   out["CI"] = "1";
   out["NO_COLOR"] = "1";
