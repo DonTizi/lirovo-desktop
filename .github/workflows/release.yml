@@ -123,9 +123,23 @@ jobs:
       # Signing is not optional here. Without the certificate electron-builder
       # skips it with a warning and the build stays green, which is how an
       # unsigned DMG reaches a release.
+      # Computed once, in an `if`, and passed on. The previous form was
+      #     APP="…/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/…"
+      # which fails the whole step on x64 and only on x64: the test returns 1,
+      # `&&` short-circuits, the command substitution exits 1, and under
+      # `bash -e` the assignment itself kills the script — before any message.
+      # arm64 passed because its test returned 0.
+      - name: where electron-builder put the app
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            echo "APP=apps/desktop/release/mac-arm64/Lirovo.app" >> "$GITHUB_ENV"
+          else
+            echo "APP=apps/desktop/release/mac/Lirovo.app" >> "$GITHUB_ENV"
+          fi
+
       - name: the app must actually be signed
         run: |
-          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
+          test -d "$APP" || { echo "::error::no app at $APP"; exit 1; }
           # `--verbose=2` is required: plain `-dv` prints no Authority lines at
           # all, so this check could never pass, on a correctly signed app or
           # any other. It failed a build that had in fact signed and notarised
@@ -143,7 +157,6 @@ jobs:
       # anyone will look after a Gatekeeper complaint.
       - name: verify the signature and the notarisation
         run: |
-          APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
           echo "── the app itself"
           codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Signature|flags"
           echo "── every bundled tool"
