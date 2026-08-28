@@ -62,6 +62,15 @@ export interface Preferences {
   readonly whisperModelId: string | null;
   /** Stable or preview. Read before the window exists, so it lives here. */
   readonly updateChannel: "latest" | "beta";
+  /**
+   * Has the first-run screen been through once?
+   *
+   * A flag, not a count: the screen is shown until somebody dismisses it, and
+   * never again. Re-showing it because the machine happens to be in a worse
+   * state than last week would be an app that interrupts to say something
+   * Settings already says.
+   */
+  readonly onboarded: boolean;
 }
 
 export interface SourceInspection {

@@ -80,6 +80,7 @@ const api = {
   },
 
   preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
+  markOnboarded: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.markOnboarded),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
     ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
 

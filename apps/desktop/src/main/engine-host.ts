@@ -392,8 +392,15 @@ const preferences = (): Preferences =>
       // Stable unless someone opted in. A preview build is a thing you choose,
       // never a thing you are moved onto.
       updateChannel: settings.get("update_channel") === "beta" ? "beta" : "latest",
+      onboarded: settings.get("onboarded") === "1",
     };
   });
+
+/** Set once, by the first-run screen, and never unset from the UI. */
+const markOnboarded = (): Preferences => {
+  withDb((db) => createSettingsStore(db).set("onboarded", "1"));
+  return preferences();
+};
 
 // On boot, honour the model the user chose last time.
 {
@@ -561,6 +568,8 @@ const handle = async (message: EngineRequest): Promise<unknown> => {
       return storage();
     case "purge":
       return purge(message.what);
+    case "markOnboarded":
+      return markOnboarded();
     case "preferences":
       return preferences();
     case "setUpdateChannel":

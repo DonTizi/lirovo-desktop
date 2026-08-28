@@ -5,6 +5,7 @@ import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@liro
 import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
 import type { RunDetail, RunSummary, ValueRow } from "../bridge/contract.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
+import { Onboarding } from "./components/Onboarding";
 import { TitleBar } from "./components/TitleBar";
 import { ListColumn, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
@@ -110,6 +111,9 @@ export const App = (): JSX.Element => {
   const [runsError, setRunsError] = useState<string | null>(null);
   const [openTabs, setOpen] = useState<Map<string, RunDetail>>(new Map());
   const [system, setSystem] = useState<SystemReport | null>(null);
+  // `null` until the engine answers. Rendering the first-run screen on a guess
+  // would flash it at every returning user for one frame.
+  const [onboarded, setOnboarded] = useState<boolean | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
@@ -177,6 +181,9 @@ export const App = (): JSX.Element => {
   useEffect(() => {
     void check();
     void loadRuns();
+    void window.lirovo.preferences().then((answer) => {
+      if (answer.ok) setOnboarded(answer.value.onboarded);
+    });
   }, [check, loadRuns]);
 
   /** Painted immediately, then confirmed: a click that waits on a round trip
@@ -308,6 +315,11 @@ export const App = (): JSX.Element => {
     { id: "schemas", label: "Schemas" },
     { id: "settings", label: "Settings", ...(attention > 0 ? { count: attention } : {}) },
   ];
+  // One flag, read by every page guard below. `onboarded` is null until the
+  // engine answers, and treating null as "not onboarded" would flash the
+  // first-run screen at a returning user for a frame.
+  const firstRun = onboarded === false && system !== null;
+
   const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
     id: r.runId,
     label: r.title ?? r.runId,
@@ -350,7 +362,23 @@ export const App = (): JSX.Element => {
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
         <div className="mx-auto max-w-6xl px-6 py-10">
-          {tab === "overview" && (
+          {/* The first launch, inside the same shell rather than over it: the
+              rows here are the rows Settings draws, and meeting them first in a
+              modal and again later in a table would read as two different
+              apps describing one machine. */}
+          {firstRun && system !== null && (
+            <Onboarding
+              report={system}
+              checking={checking}
+              onRecheck={() => void check()}
+              onDone={() => {
+                setOnboarded(true);
+                void window.lirovo.markOnboarded();
+              }}
+            />
+          )}
+
+          {!firstRun && tab === "overview" && (
             <>
               {/* The blocking reason belongs ABOVE the field, not only in the
                   panel below: a user who drops a two-hour video and learns
@@ -470,9 +498,9 @@ export const App = (): JSX.Element => {
             </>
           )}
 
-          {tab === "schemas" && <SchemasPage />}
+          {!firstRun && tab === "schemas" && <SchemasPage />}
 
-          {tab === "settings" && (
+          {!firstRun && tab === "settings" && (
             <SettingsPage
               report={system}
               onRecheck={() => void check()}
@@ -481,7 +509,7 @@ export const App = (): JSX.Element => {
             />
           )}
 
-          {tab === "library" && (
+          {!firstRun && tab === "library" && (
             <Library
               runs={runs}
               loading={runs.length === 0 && system === null && runsError === null}

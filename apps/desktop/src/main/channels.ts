@@ -33,6 +33,7 @@ export const CHANNELS = {
   updateChannel: "lirovo:update-channel",
   updateEvent: "lirovo:update-event",
   busy: "lirovo:busy",
+  markOnboarded: "lirovo:mark-onboarded",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event",
