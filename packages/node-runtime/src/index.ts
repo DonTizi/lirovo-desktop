@@ -15,3 +15,4 @@ export * from "./store/settings.js";
 export * from "./p-map.js";
 export * from "./asr/index.js";
 export * from "./inference/index.js";
+export * from "./run-fix.js";

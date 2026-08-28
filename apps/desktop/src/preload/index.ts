@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CHANNELS } from "../main/channels.js";
 import type { InstallOutcome, Preferences, RunArtifacts, RunDetail, RunSummary, SourceInspection, UpdateState } from "../bridge/contract.js";
-import type { ExtractRequest, StorageReport } from "../bridge/contract.js";
+import type { ExtractRequest, FixResult, StorageReport } from "../bridge/contract.js";
 import type { FieldSpec } from "@lirovo/core";
 import type { SchemaRevision, SchemaSummary } from "@lirovo/node-runtime";
 
@@ -81,6 +81,8 @@ const api = {
 
   preferences: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.preferences),
   markOnboarded: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.markOnboarded),
+  /** By id. The command lives in the main process and never crosses this bridge. */
+  runFix: (fixId: string): Promise<Result<FixResult>> => ipcRenderer.invoke(CHANNELS.runFix, { fixId }),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
     ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
 

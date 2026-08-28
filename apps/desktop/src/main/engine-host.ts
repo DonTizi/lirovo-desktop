@@ -8,6 +8,7 @@ import {
   DEFAULT_WHISPER_MODEL_ID,
   DEPENDENCIES,
   YT_DLP,
+  planFor,
   planForBudget,
   runDoctor,
   runExtraction,
@@ -42,6 +43,7 @@ import {
   realExec,
   resolveBinary,
   resolvePaths,
+  runFix,
   selectBackend,
   sourceTypeOf,
 } from "@lirovo/node-runtime";
@@ -402,6 +404,28 @@ const markOnboarded = (): Preferences => {
   return preferences();
 };
 
+/**
+ * Install one of the things this app knows about, named by id.
+ *
+ * The id is resolved to a command HERE, against `FIXES`, and never carried
+ * across the bridge. An unknown id runs nothing: the window can name what this
+ * app ships and nothing else, which is the whole reason this is safe to have
+ * at all.
+ */
+const installByFixId = async (fixId: string): Promise<{
+  readonly ok: boolean;
+  readonly code: number | null;
+  readonly output: string;
+  readonly homepage: string | null;
+}> => {
+  const plan = planFor(fixId);
+  if (plan === null) {
+    throw asLirovoError(new Error(`nothing known to install for "${fixId}"`), "HARNESS_NOT_FOUND");
+  }
+  const outcome = await runFix(plan.command);
+  return { ...outcome, homepage: plan.homepage };
+};
+
 // On boot, honour the model the user chose last time.
 {
   const chosen = preferences().whisperModelId;
@@ -570,6 +594,8 @@ const handle = async (message: EngineRequest): Promise<unknown> => {
       return purge(message.what);
     case "markOnboarded":
       return markOnboarded();
+    case "runFix":
+      return installByFixId(message.fixId);
     case "preferences":
       return preferences();
     case "setUpdateChannel":

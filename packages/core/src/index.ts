@@ -11,3 +11,4 @@ export * from "./schema-builder.js";
 export * from "./installables.js";
 export * from "./transcript-paragraphs.js";
 export * from "./onboarding.js";
+export * from "./fixes.js";

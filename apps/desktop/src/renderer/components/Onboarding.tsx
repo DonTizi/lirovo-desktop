@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Fix } from "@lirovo/contracts";
 import { canExtract, onboardingSteps, type OnboardingStep, type StepId } from "@lirovo/core";
 import { InstallButton } from "./system/install-button";
+import { FixButton } from "./system/fix-button";
 import { PixelField } from "./PixelField";
 import { Mark } from "./logos";
 import { cn } from "../lib/cn";
@@ -288,6 +289,7 @@ function Detail({
             ok={dep.found}
             fetchable={dep.found ? null : (FETCHABLE[dep.id] ?? null)}
             fix={dep.found ? null : dep.fix}
+            fixId={dep.id}
             onRecheck={onRecheck}
           />
         ))}
@@ -334,6 +336,7 @@ function Detail({
           ok={b.available}
           fetchable={null}
           fix={b.available ? null : b.fix}
+          fixId={b.id}
           href={b.available ? undefined : HOMEPAGES[b.id]}
           onRecheck={onRecheck}
           logo={b.id}
@@ -361,6 +364,7 @@ function Row({
   ok,
   fetchable,
   fix,
+  fixId,
   href,
   onRecheck,
   logo,
@@ -373,6 +377,8 @@ function Row({
   ok: boolean;
   fetchable: "whisper-model" | "yt-dlp" | null;
   fix: Fix | null;
+  /** Which entry in the app's fix table this row is. Sent instead of a command. */
+  fixId?: string | undefined;
   href?: string | undefined;
   onRecheck: () => void;
   logo?: string;
@@ -405,7 +411,12 @@ function Row({
 
   const actions = (
     <>
-      {fix !== null && <CopyCommand fix={fix} />}
+      {/* Run it. The previous version copied the command to the clipboard and
+          called that an install, which left the row exactly as amber as it
+          found it. */}
+      {fix !== null && fixId !== undefined && (
+        <FixButton fixId={fixId} label={fix.label} command={fix.command} onDone={onRecheck} compact />
+      )}
       {href !== undefined && (
         <a
           href={href}
