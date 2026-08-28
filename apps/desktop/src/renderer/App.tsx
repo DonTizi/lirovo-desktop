@@ -371,6 +371,7 @@ export const App = (): JSX.Element => {
               report={system}
               checking={checking}
               onRecheck={() => void check()}
+              onChooseBackend={chooseBackend}
               onDone={() => {
                 setOnboarded(true);
                 void window.lirovo.markOnboarded();
