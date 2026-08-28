@@ -39,7 +39,8 @@ export type EngineRequest =
   | { id: string; type: "purge"; what: "runs" | "everything" }
   | { id: string; type: "preferences" }
   | { id: string; type: "setUpdateChannel"; channel: "latest" | "beta" }
-  | { id: string; type: "setDefaultBackend"; backendId: string | null };
+  | { id: string; type: "setDefaultBackend"; backendId: string | null }
+  | { id: string; type: "markOnboarded" };
 
 /**
  * A message from the engine.

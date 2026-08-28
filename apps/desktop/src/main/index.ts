@@ -313,6 +313,7 @@ app.whenReady().then(() => {
   );
 
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
+  ipcMain.handle(CHANNELS.markOnboarded, guard(() => ask({ type: "markOnboarded" })));
   ipcMain.handle(
     CHANNELS.setDefaultBackend,
     guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),
