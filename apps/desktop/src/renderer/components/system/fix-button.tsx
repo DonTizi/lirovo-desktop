@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, ArrowUpRight, Check, Copy, Download, Loader2 } from "lucide-react";
+import { planFor } from "@lirovo/core";
 import { cn } from "../../lib/cn";
 import { useCopied } from "../../lib/use-copied";
 
@@ -33,10 +34,37 @@ export function FixButton({
   fixId: string;
   /** The verb for this particular fix: Install, Start, Sign in. */
   label: string;
-  /** Shown on failure, and copyable, so nothing here is a dead end. */
+  /** What the row says to run. Also what gets copied when this fails. */
   command: string;
   onDone: () => void;
   compact?: boolean;
+}): JSX.Element {
+  // The button only offers to run the command the ROW is showing.
+  //
+  // The doctor's advice changes with state: a missing Ollama is
+  // `brew install ollama`, an installed-but-idle one is `ollama serve && ollama
+  // pull …`. The table this app is willing to run holds one command per id, so
+  // for the second case the row said one thing and pressing the button ran
+  // another — and the failure it reported then copied a command that had never
+  // been executed. Offering to copy is honest there; offering to install is
+  // not.
+  const plan = planFor(fixId);
+  if (plan === null || plan.command !== command) return <CopyCommandButton command={command} />;
+  return <RunButton fixId={fixId} label={label} command={command} onDone={onDone} compact={compact} />;
+}
+
+function RunButton({
+  fixId,
+  label,
+  command,
+  onDone,
+  compact,
+}: {
+  fixId: string;
+  label: string;
+  command: string;
+  onDone: () => void;
+  compact: boolean;
 }): JSX.Element {
   const [state, setState] = useState<"idle" | "running">("idle");
   const [failure, setFailure] = useState<{ output: string; homepage: string | null } | null>(null);

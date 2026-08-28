@@ -642,7 +642,20 @@ export function SettingsPage({
               ))}
             </div>
           ) : (
-            <table className="w-full border-separate border-spacing-0 text-sm">
+            /* `table-fixed` with a colgroup, not `w-full` alone. Under the
+               default auto layout a cell grows to fit its content and the
+               `max-w` on the detail column is ignored — so a long command like
+               `ollama serve && ollama pull qwen2.5vl:7b` pushed the whole table
+               past the card and took the actions column off the right edge with
+               it. The buttons were there; they were just off-screen, which is
+               indistinguishable from a button that does nothing. */
+            <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+              <colgroup>
+                <col />
+                <col className="w-[104px]" />
+                <col className="w-[38%]" />
+                <col className="w-[132px]" />
+              </colgroup>
               <thead>
                 <tr className="text-ink-subtle text-left text-[11px] uppercase tracking-wide">
                   <th className="border-hairline border-b px-4 py-2 font-medium">Component</th>
