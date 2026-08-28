@@ -208,7 +208,11 @@ function InstallAll({
  */
 function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [at, setAt] = useState<{ top: number; right: number; above: boolean } | null>(null);
+  // One of `top` or `bottom`, never both: which one is set is what anchors the
+  // menu above or below the button.
+  const [at, setAt] = useState<
+    { right: number; above: boolean; top?: number; bottom?: number } | null
+  >(null);
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
 
@@ -229,7 +233,15 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
     };
   }, [open]);
 
-  const nothing = entry.fix === null && entry.path === null && !entry.selectable;
+  // Every item this menu could show, counted before it is offered.
+  //
+  // `selectable` alone is not enough: a backend that is running AND is already
+  // the default has nothing to be chosen for, so a menu built from it came up
+  // empty — a 14px box with a border and no content. Pressing "..." on the
+  // DEFAULT model opened nothing at all, which reads as the menu being broken
+  // rather than as there being nothing to do.
+  const canChoose = entry.selectable && !entry.selected;
+  const nothing = entry.fix === null && entry.path === null && !canChoose;
   if (nothing) return <span className="w-7" />;
 
   const toggle = (): void => {
@@ -242,7 +254,14 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
     // 220px is the tallest this menu gets: three items and its padding.
     const above = r.bottom + 220 > window.innerHeight;
     setAt({
-      top: above ? r.top - 4 : r.bottom + 4,
+      // `bottom` when flipping up, never a transform. framer-motion animates
+      // `y` and `scale`, which means it owns the `transform` property — an
+      // inline `translateY(-100%)` was silently overwritten on every open, so
+      // the flip never happened and the menu on the last row opened downward
+      // off the bottom of the window.
+      ...(above
+        ? { bottom: window.innerHeight - r.top + 4 }
+        : { top: r.bottom + 4 }),
       right: window.innerWidth - r.right,
       above,
     });
@@ -269,9 +288,8 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
               transition={{ duration: 0.14, ease: "easeOut" }}
               style={{
                 position: "fixed",
-                top: at.top,
                 right: at.right,
-                ...(at.above ? { transform: "translateY(-100%)" } : {}),
+                ...(at.above ? { bottom: at.bottom } : { top: at.top }),
               }}
               className={cn(
                 "border-hairline bg-base shadow-popover z-50 w-60 rounded-xl border py-1.5",
@@ -642,7 +660,20 @@ export function SettingsPage({
               ))}
             </div>
           ) : (
-            <table className="w-full border-separate border-spacing-0 text-sm">
+            /* `table-fixed` with a colgroup, not `w-full` alone. Under the
+               default auto layout a cell grows to fit its content and the
+               `max-w` on the detail column is ignored — so a long command like
+               `ollama serve && ollama pull qwen2.5vl:7b` pushed the whole table
+               past the card and took the actions column off the right edge with
+               it. The buttons were there; they were just off-screen, which is
+               indistinguishable from a button that does nothing. */
+            <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+              <colgroup>
+                <col />
+                <col className="w-[104px]" />
+                <col className="w-[38%]" />
+                <col className="w-[132px]" />
+              </colgroup>
               <thead>
                 <tr className="text-ink-subtle text-left text-[11px] uppercase tracking-wide">
                   <th className="border-hairline border-b px-4 py-2 font-medium">Component</th>
