@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.1...v0.4.2) (2026-08-28)
+
+
+### Fixed
+
+* **ci:** count the whole repo, since the whole repo is what ships ([#32](https://github.com/DonTizi/lirovo-desktop/issues/32)) ([a636135](https://github.com/DonTizi/lirovo-desktop/commit/a636135b187a50b1445be835260ee7b70b927861))
+* **runtime:** give a spawned CLI a PATH that can start it ([#31](https://github.com/DonTizi/lirovo-desktop/issues/31)) ([4de9d2b](https://github.com/DonTizi/lirovo-desktop/commit/4de9d2bc4318cb62782d5f2805a5f1d50b79559d))
+
 ## [0.4.1](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.0...v0.4.1) (2026-08-28)
 
 
