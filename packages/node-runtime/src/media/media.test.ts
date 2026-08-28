@@ -377,6 +377,72 @@ describe("where a binary is looked for", () => {
     expect((await resolveBinary("yt-dlp", paths, { PATH: "" }))?.origin).toBe("installed");
   });
 
+  it("finds a tool in ~/.local/bin, which a Finder-launched app cannot see on PATH", async () => {
+    // The real report: codex and claude live in ~/.local/bin, resolve instantly
+    // from a terminal, and were shown as "not installed" by the packaged app —
+    // which inherits `/usr/bin:/bin:/usr/sbin:/sbin` from launchd and nothing
+    // else. `npm config get prefix` was ~/.local, so the remedy the app printed
+    // installed to the one place it refused to look.
+    const home = await mkdtemp(path.join(tmpdir(), "lirovo-home-"));
+    await mkdir(path.join(home, ".local", "bin"), { recursive: true });
+    const target = path.join(home, ".local", "bin", "codex");
+    await writeFile(target, "#!/bin/sh\n");
+    await chmod(target, 0o755);
+
+    const paths = { data: home, runs: "", models: "", bundledBin: null, dbFile: "" };
+    // The PATH a double-clicked app actually gets.
+    const found = await resolveBinary("codex", paths, { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home });
+    expect(found?.path).toBe(target);
+    expect(found?.origin).toBe("path");
+  });
+
+  it("finds a tool under an nvm node version, where `npm i -g` puts it", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "lirovo-home-"));
+    const bin = path.join(home, ".nvm", "versions", "node", "v22.1.0", "bin");
+    await mkdir(bin, { recursive: true });
+    const target = path.join(bin, "claude");
+    await writeFile(target, "#!/bin/sh\n");
+    await chmod(target, 0o755);
+
+    const paths = { data: home, runs: "", models: "", bundledBin: null, dbFile: "" };
+    expect((await resolveBinary("claude", paths, { PATH: "", HOME: home }))?.path).toBe(target);
+  });
+
+  it("prefers the newest node version when several have the same tool", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "lirovo-home-"));
+    for (const v of ["v18.0.0", "v22.1.0"]) {
+      const bin = path.join(home, ".nvm", "versions", "node", v, "bin");
+      await mkdir(bin, { recursive: true });
+      const f = path.join(bin, "claude");
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data: home, runs: "", models: "", bundledBin: null, dbFile: "" };
+    const found = await resolveBinary("claude", paths, { PATH: "", HOME: home });
+    expect(found?.path).toContain("v22.1.0");
+  });
+
+  it("lets a real PATH win over the fallbacks", async () => {
+    // A dev shell, or the CLI. The fallbacks exist for the blindfolded case
+    // and must not override an answer PATH already gave.
+    const home = await mkdtemp(path.join(tmpdir(), "lirovo-home-"));
+    const onPath = path.join(home, "real");
+    await mkdir(onPath, { recursive: true });
+    await mkdir(path.join(home, ".local", "bin"), { recursive: true });
+    for (const f of [path.join(onPath, "codex"), path.join(home, ".local", "bin", "codex")]) {
+      await writeFile(f, "#!/bin/sh\n");
+      await chmod(f, 0o755);
+    }
+    const paths = { data: home, runs: "", models: "", bundledBin: null, dbFile: "" };
+    const found = await resolveBinary("codex", paths, { PATH: onPath, HOME: home });
+    expect(found?.path).toBe(path.join(onPath, "codex"));
+  });
+
+  it("does not fall over when there is no HOME", async () => {
+    const paths = { data: "/nowhere", runs: "", models: "", bundledBin: null, dbFile: "" };
+    expect(await resolveBinary("codex", paths, { PATH: "" })).toBeNull();
+  });
+
   it("still finds the bundled yt-dlp when nothing has been installed", async () => {
     // The swap must not cost a fresh install its only copy.
     const data = await mkdtemp(path.join(tmpdir(), "lirovo-bin-"));

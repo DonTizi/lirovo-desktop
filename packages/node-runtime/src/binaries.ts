@@ -1,10 +1,59 @@
 import { access, constants } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import type { Exec } from "@lirovo/contracts";
 import type { BinaryStatus, DependencySpec, LirovoPaths } from "@lirovo/core";
 
 /** Homebrew's two prefixes: Apple Silicon first, then Intel. */
 const HOMEBREW_PREFIXES = ["/opt/homebrew/bin", "/usr/local/bin"] as const;
+
+/**
+ * Where to look when PATH is nearly empty, which in a packaged app it is.
+ *
+ * An app launched from the Finder does not inherit the shell's PATH. launchd
+ * hands it `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else, so every tool a
+ * developer installed into a user-level prefix becomes invisible — while the
+ * same tool resolves instantly from a terminal, which is what makes this look
+ * like the app lying rather than the app being blindfolded.
+ *
+ * The list is the places macOS CLI tools actually land:
+ *
+ *   ~/.local/bin        pipx, and any npm prefix set to ~/.local
+ *   ~/.npm-global/bin   the other common npm-prefix convention
+ *   ~/bin               the oldest one
+ *   ~/.nvm/…/bin        where `npm i -g` puts things for an nvm user, which is
+ *                       the exact command this app prints as the remedy
+ *   Homebrew            last, and unchanged
+ *
+ * PATH is still searched first, so a real PATH — from the CLI, or from a dev
+ * run — always wins over any of this.
+ */
+const userBinDirs = (env: NodeJS.ProcessEnv): readonly string[] => {
+  const home = env["HOME"];
+  if (home === undefined || home === "") return [];
+  return [path.join(home, ".local", "bin"), path.join(home, ".npm-global", "bin"), path.join(home, "bin")];
+};
+
+/**
+ * Every node version nvm has installed, newest first.
+ *
+ * All of them rather than the default alias: a tool installed under the node
+ * that was current six months ago is still on disk and still runs, and the
+ * alternative is telling someone to reinstall something they already have.
+ */
+const nvmBinDirs = (env: NodeJS.ProcessEnv): readonly string[] => {
+  const home = env["HOME"];
+  if (home === undefined || home === "") return [];
+  const root = path.join(home, ".nvm", "versions", "node");
+  try {
+    return readdirSync(root)
+      .sort()
+      .reverse()
+      .map((v) => path.join(root, v, "bin"));
+  } catch {
+    return [];
+  }
+};
 
 const isExecutable = async (candidate: string): Promise<boolean> => {
   try {
@@ -78,6 +127,12 @@ export const resolveBinary = async (
   for (const prefix of HOMEBREW_PREFIXES) {
     const candidate = path.join(prefix, id);
     if (await isExecutable(candidate)) return { path: candidate, origin: "homebrew" };
+  }
+  // Everything a Finder-launched app cannot see through PATH. Reported as
+  // `path`, because that is where a terminal would have found it.
+  for (const dir of [...userBinDirs(env), ...nvmBinDirs(env)]) {
+    const candidate = path.join(dir, id);
+    if (await isExecutable(candidate)) return { path: candidate, origin: "path" };
   }
   return null;
 };
