@@ -73,6 +73,23 @@ export interface Preferences {
   readonly onboarded: boolean;
 }
 
+/**
+ * What running an install command produced.
+ *
+ * The output comes back whether it worked or not. A failed `npm i -g` says why
+ * — a proxy, a permission, a package that moved — and a button that reported
+ * only "failed" would leave somebody with nothing to act on and no terminal
+ * open to find out.
+ */
+export interface FixResult {
+  readonly ok: boolean;
+  readonly code: number | null;
+  /** The tail of stdout and stderr. Empty when there was nothing to say. */
+  readonly output: string;
+  /** Where to go when the command was not enough. */
+  readonly homepage: string | null;
+}
+
 export interface SourceInspection {
   readonly kind: "url" | "file";
   /** youtube | vimeo | loom | url, or the file extension. */

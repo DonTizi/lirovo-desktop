@@ -38,6 +38,18 @@ export const fieldSpecSchema = z.object({
   description: z.string().optional(),
 });
 
+/**
+ * Which of the things this app ships to install.
+ *
+ * An enum, not a string. This channel ends at a shell, and the difference
+ * between `z.string().max(400)` and this list is the difference between a
+ * length cap on arbitrary input and a closed vocabulary. `FIXES` in core holds
+ * the commands; nothing here can name one that is not in it.
+ */
+export const runFixSchema = z.object({
+  fixId: z.enum(["ffmpeg", "ffprobe", "yt-dlp", "whisper-cli", "local", "codex", "claude"]),
+});
+
 export const saveSchemaRequestSchema = z.object({
   schemaId: z.string().optional(),
   name: z.string().min(1),

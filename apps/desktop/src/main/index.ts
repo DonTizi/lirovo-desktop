@@ -12,6 +12,7 @@ import {
   revealSchema,
   updateChannelSchema,
   inspectRequestSchema,
+  runFixSchema,
   runIdSchema,
   saveSchemaRequestSchema,
   schemaIdSchema,
@@ -314,6 +315,17 @@ app.whenReady().then(() => {
 
   ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
   ipcMain.handle(CHANNELS.markOnboarded, guard(() => ask({ type: "markOnboarded" })));
+  ipcMain.handle(
+    CHANNELS.runFix,
+    guard((payload) => {
+      // Validated against the registry itself, not against a shape. A schema
+      // that accepted "any string up to 400 characters" would be a length cap
+      // on a shell; `FixId` is the list of things this app ships, and nothing
+      // outside it can be named.
+      const { fixId } = runFixSchema.parse(payload);
+      return ask({ type: "runFix", fixId });
+    }),
+  );
   ipcMain.handle(
     CHANNELS.setDefaultBackend,
     guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),

@@ -40,7 +40,16 @@ export type EngineRequest =
   | { id: string; type: "preferences" }
   | { id: string; type: "setUpdateChannel"; channel: "latest" | "beta" }
   | { id: string; type: "setDefaultBackend"; backendId: string | null }
-  | { id: string; type: "markOnboarded" };
+  | { id: string; type: "markOnboarded" }
+  /**
+   * Install one of the things this app knows about, BY ID.
+   *
+   * Never a command. The window names something — `"codex"` — and the side
+   * that owns the shell looks the command up in `FIXES`. Carrying the command
+   * across instead would make this channel a way to run anything, which is
+   * what a renderer bug would reach for first.
+   */
+  | { id: string; type: "runFix"; fixId: string };
 
 /**
  * A message from the engine.

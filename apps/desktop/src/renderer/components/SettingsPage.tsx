@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
@@ -23,6 +24,7 @@ import { Skeleton } from "./primitives";
 import { cn } from "../lib/cn";
 import { useCopied } from "../lib/use-copied";
 import { InstallButton } from "./system/install-button";
+import { FixButton } from "./system/fix-button";
 import { DOT, FETCHABLE, RANK, label, roleOf, type Health, type SystemReport } from "../lib/system-vocabulary";
 
 interface Entry {
@@ -192,40 +194,90 @@ function InstallAll({
 }
 
 /** The row menu: everything that is not the one obvious action. */
+/**
+ * The row's own actions.
+ *
+ * Rendered into `document.body`, not into the row. The table lives inside a
+ * card with `overflow-hidden` — which is what gives it its rounded corners —
+ * so an absolutely positioned menu was clipped by it, and the menu on the LAST
+ * row was clipped to nothing at all: the button opened something invisible.
+ *
+ * A portal puts it outside every clipping ancestor. The position is measured
+ * from the button and it flips above when there is no room below, so a row at
+ * the bottom of the window opens upward instead of off the edge.
+ */
 function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ top: number; right: number; above: boolean } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent): void => {
       if (wrap.current?.contains(e.target as Node) !== true) setOpen(false);
     };
+    // Scrolling would leave a fixed menu behind, pointing at nothing.
+    const close = (): void => setOpen(false);
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
   }, [open]);
 
   const nothing = entry.fix === null && entry.path === null && !entry.selectable;
   if (nothing) return <span className="w-7" />;
 
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = trigger.current?.getBoundingClientRect();
+    if (r === undefined) return;
+    // 220px is the tallest this menu gets: three items and its padding.
+    const above = r.bottom + 220 > window.innerHeight;
+    setAt({
+      top: above ? r.top - 4 : r.bottom + 4,
+      right: window.innerWidth - r.right,
+      above,
+    });
+    setOpen(true);
+  };
+
   return (
     <div ref={wrap} className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={trigger}
+        onClick={toggle}
         aria-label={`Actions for ${entry.name}`}
         className="text-ink-subtle hover:bg-elevated hover:text-ink grid size-7 place-items-center rounded transition-colors"
       >
         <MoreHorizontal className="size-4" />
       </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="border-hairline bg-base shadow-popover absolute right-0 top-8 z-30 w-60 origin-top-right rounded-xl border py-1.5"
-          >
+      {createPortal(
+        <AnimatePresence>
+          {open && at !== null && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97, y: at.above ? 4 : -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+              style={{
+                position: "fixed",
+                top: at.top,
+                right: at.right,
+                ...(at.above ? { transform: "translateY(-100%)" } : {}),
+              }}
+              className={cn(
+                "border-hairline bg-base shadow-popover z-50 w-60 rounded-xl border py-1.5",
+                at.above ? "origin-bottom-right" : "origin-top-right",
+              )}
+            >
             {entry.selectable && !entry.selected && (
               <button
                 onClick={() => {
@@ -251,9 +303,11 @@ function RowMenu({ entry, onChoose }: { entry: Entry; onChoose: () => void }): J
                 Reveal in Finder
               </button>
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -652,8 +706,21 @@ export function SettingsPage({
                           </td>
                           <td className="border-hairline border-b px-3 py-2.5">
                             <span className="flex items-center justify-end gap-1.5">
+                              {/* A verified download when there is one — those
+                                  are fetched and checksummed by this app. */}
                               {entry.fetchable !== null && (
                                 <InstallButton what={entry.fetchable} onDone={onRecheck} />
+                              )}
+                              {/* Otherwise the command, RUN rather than copied.
+                                  A button labelled Install that only filled the
+                                  clipboard was a button that did nothing. */}
+                              {entry.fetchable === null && entry.fix !== null && (
+                                <FixButton
+                                  fixId={entry.id}
+                                  label={entry.fix.label}
+                                  command={entry.fix.command}
+                                  onDone={onRecheck}
+                                />
                               )}
                               <RowMenu entry={entry} onChoose={() => onChooseBackend(entry.id)} />
                             </span>
