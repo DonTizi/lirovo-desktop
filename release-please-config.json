@@ -5,13 +5,19 @@
   "bump-minor-pre-major": true,
   "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
   "packages": {
-    "apps/desktop": {
+    ".": {
       "release-type": "node",
       "package-name": "lirovo-desktop",
       "component": "",
-      "changelog-path": "CHANGELOG.md",
+      "changelog-path": "apps/desktop/CHANGELOG.md",
       "include-component-in-tag": false,
-      "extra-files": []
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "apps/desktop/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
     }
   },
   "changelog-sections": [
