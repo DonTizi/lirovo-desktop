@@ -126,8 +126,18 @@ jobs:
       - name: the app must actually be signed
         run: |
           APP="apps/desktop/release/mac$([ '${{ matrix.arch }}' = 'arm64' ] && echo '-arm64')/Lirovo.app"
-          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+          # `--verbose=2` is required: plain `-dv` prints no Authority lines at
+          # all, so this check could never pass, on a correctly signed app or
+          # any other. It failed a build that had in fact signed and notarised
+          # cleanly.
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
             || { echo "::error::$APP is not signed with a Developer ID"; exit 1; }
+
+          # Signed is not the same as accepted. Notarisation staples a ticket
+          # to the app, and without it Gatekeeper still refuses on a machine
+          # that has never seen this build.
+          xcrun stapler validate "$APP" \
+            || { echo "::error::$APP carries no notarisation ticket"; exit 1; }
 
       # Proof, in the log, before anything is public. Cheap, and the only place
       # anyone will look after a Gatekeeper complaint.
@@ -139,7 +149,7 @@ jobs:
           echo "── every bundled tool"
           for tool in "$APP"/Contents/Resources/bin/*; do
             printf '%-14s ' "$(basename "$tool")"
-            codesign -dv "$tool" 2>&1 | grep -c Authority | tr -d '\n'
+            codesign -dv --verbose=2 "$tool" 2>&1 | grep -c Authority | tr -d '\n'
             echo " authorities · $(file -b "$tool" | head -c 48)"
           done
           echo "── Gatekeeper's own verdict"
