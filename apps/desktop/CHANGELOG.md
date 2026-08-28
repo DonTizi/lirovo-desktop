@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.0...v0.4.1) (2026-08-28)
+
+
+### Fixed
+
+* **desktop:** a table that fits, a button that runs what the row says, a menu that opens ([#29](https://github.com/DonTizi/lirovo-desktop/issues/29)) ([3930266](https://github.com/DonTizi/lirovo-desktop/commit/3930266372e72b36e82a056eb974c2cb59007cb9))
+
 ## [0.4.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.3.0...v0.4.0) (2026-08-28)
 
 
