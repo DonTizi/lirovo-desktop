@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.3.0...v0.4.0) (2026-08-28)
+
+
+### Added
+
+* **desktop:** install the thing, instead of copying a command about it ([#27](https://github.com/DonTizi/lirovo-desktop/issues/27)) ([e90d04c](https://github.com/DonTizi/lirovo-desktop/commit/e90d04c2cbeb51b5eac6a94e8f9fa44b715fc69d))
+
 ## [0.3.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.2.0...v0.3.0) (2026-08-28)
 
 
