@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.1.0...v0.2.0) (2026-08-28)
+
+
+### Added
+
+* **desktop:** a first launch that settles the three things still open ([#18](https://github.com/DonTizi/lirovo-desktop/issues/18)) ([a040dcf](https://github.com/DonTizi/lirovo-desktop/commit/a040dcf95a4ba0aa9c0ee23fc54f8e46769f67de))
+
+
+### Fixed
+
+* **desktop:** say why a check found nothing, instead of pasting the transport ([#17](https://github.com/DonTizi/lirovo-desktop/issues/17)) ([543d25d](https://github.com/DonTizi/lirovo-desktop/commit/543d25d7f81c3cc91fd287cb50240bc278b05f12))
+
 ## 0.1.0 (2026-08-28)
 
 
