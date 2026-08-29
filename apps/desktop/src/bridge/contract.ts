@@ -71,6 +71,14 @@ export interface Preferences {
    * Settings already says.
    */
   readonly onboarded: boolean;
+  /**
+   * Which palette, or `system` to follow the machine.
+   *
+   * The choice is stored, never the resolved palette: somebody on `system` who
+   * switches their Mac to dark at sunset should follow it, and storing "dark"
+   * the first time it resolved would silently pin them there.
+   */
+  readonly theme: "system" | "light" | "dark";
 }
 
 /**

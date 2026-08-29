@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeTheme, shell, utilityProcess, type UtilityProcess } from "electron";
 import {
   CHANNELS,
   defaultBackendSchema,
@@ -10,6 +10,7 @@ import {
   installSchema,
   purgeSchema,
   revealSchema,
+  themeSchema,
   updateChannelSchema,
   inspectRequestSchema,
   runFixSchema,
@@ -169,10 +170,18 @@ let channelAtBoot: UpdateChannel = "latest";
 app.whenReady().then(() => {
   installMediaProtocol();
 
-  void ask<{ updateChannel: UpdateChannel }>({ type: "preferences" })
+  void ask<{ updateChannel: UpdateChannel; theme: "system" | "light" | "dark" }>({ type: "preferences" })
     .then((prefs) => {
       channelAtBoot = prefs.updateChannel;
       setChannel(channelAtBoot);
+      // At boot too, not only when it is changed.
+      //
+      // Without this line the window came back dark — the renderer reads the
+      // same setting — while `themeSource` had reset to `system`, so the title
+      // bar and the scrollbars were light around it. A theme that is only
+      // applied on the click that sets it is a theme that is right once and
+      // wrong every launch after.
+      nativeTheme.themeSource = prefs.theme;
     })
     .catch(() => undefined);
 
@@ -259,6 +268,19 @@ app.whenReady().then(() => {
       setChannel(channel);
       await ask({ type: "setUpdateChannel", channel });
       return { version: currentVersion(), channel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(
+    CHANNELS.setTheme,
+    guard(async (payload) => {
+      const { theme } = themeSchema.parse(payload);
+      // Electron paints the parts of the window this app does not: the title
+      // bar, the scrollbars, the space behind an overscroll. Left alone they
+      // stay light around a dark app, which is the detail that makes a theme
+      // look half-applied. `system` hands the decision back to macOS, which is
+      // exactly what `themeSource` means.
+      nativeTheme.themeSource = theme;
+      return ask({ type: "setTheme", theme });
     }),
   );
   ipcMain.handle(

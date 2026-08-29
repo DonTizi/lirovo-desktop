@@ -83,6 +83,8 @@ const api = {
   markOnboarded: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.markOnboarded),
   /** By id. The command lives in the main process and never crosses this bridge. */
   runFix: (fixId: string): Promise<Result<FixResult>> => ipcRenderer.invoke(CHANNELS.runFix, { fixId }),
+  setTheme: (theme: "system" | "light" | "dark"): Promise<Result<Preferences>> =>
+    ipcRenderer.invoke(CHANNELS.setTheme, { theme }),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
     ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
 

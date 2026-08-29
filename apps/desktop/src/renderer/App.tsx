@@ -6,6 +6,7 @@ import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
 import type { RunDetail, RunSummary, ValueRow } from "../bridge/contract.js";
 import { NavBar, type NavTab, type TabId } from "./components/NavBar";
 import { Onboarding } from "./components/Onboarding";
+import { applyChoice, type ThemeChoice } from "./lib/theme";
 import { TitleBar } from "./components/TitleBar";
 import { ListColumn, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
@@ -114,6 +115,10 @@ export const App = (): JSX.Element => {
   // `null` until the engine answers. Rendering the first-run screen on a guess
   // would flash it at every returning user for one frame.
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  // `null` until the engine answers. The pre-paint script in index.html has
+  // already put a palette on the document by then, so there is nothing to draw
+  // and nothing to flash.
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
@@ -182,9 +187,22 @@ export const App = (): JSX.Element => {
     void check();
     void loadRuns();
     void window.lirovo.preferences().then((answer) => {
-      if (answer.ok) setOnboarded(answer.value.onboarded);
+      if (answer.ok) {
+        setOnboarded(answer.value.onboarded);
+        setThemeChoice(answer.value.theme);
+      }
     });
   }, [check, loadRuns]);
+
+  // The choice drives the document; the document is never read back. One
+  // direction, one property, and nothing to keep in step.
+  //
+  // No listener for the system palette: `applyChoice` clears the inline value
+  // for `system`, and the stylesheet's own `color-scheme: light dark` then
+  // follows the machine live. The browser was already doing the job.
+  useEffect(() => {
+    if (themeChoice !== null) applyChoice(themeChoice);
+  }, [themeChoice]);
 
   /** Painted immediately, then confirmed: a click that waits on a round trip
    *  before the check moves reads as broken. */

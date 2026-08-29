@@ -35,6 +35,7 @@ export const CHANNELS = {
   busy: "lirovo:busy",
   markOnboarded: "lirovo:mark-onboarded",
   runFix: "lirovo:run-fix",
+  setTheme: "lirovo:set-theme",
   preferences: "lirovo:preferences",
   setDefaultBackend: "lirovo:set-default-backend",
   engineEvent: "lirovo:engine-event",

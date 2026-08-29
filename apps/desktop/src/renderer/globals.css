@@ -23,28 +23,43 @@
  */
 @layer base {
   :root {
+    /*
+     * One declaration per token, and `color-scheme` chooses the palette.
+     *
+     * Each value below is `light-dark(light, dark)`. The alternative — a
+     * `.dark` class redefining the same names — let the two palettes drift
+     * apart one token at a time, and it could not paint before JavaScript ran:
+     * the window opened light and flipped, because the CSP forbids the inline
+     * script that usually hides that.
+     *
+     * `light dark` means "follow the system unless told otherwise". `theme.ts`
+     * tells it otherwise by writing `color-scheme` on the root, and that one
+     * property is the entire mechanism.
+     */
+    color-scheme: light dark;
+
     /* surfaces */
-    --kumo-canvas: oklch(98.75% 0 0);
-    --kumo-base: #fff;
-    --kumo-elevated: oklch(98% 0 0);
-    --kumo-recessed: oklch(96% 0 0);
-    --kumo-tint: oklch(97% 0 0);
-    --kumo-fill: oklch(92.2% 0 0);
-    --kumo-fill-hover: oklch(96.5% 0 0);
+    --kumo-canvas: light-dark(oklch(98.75% 0 0), oklch(10% 0 0));
+    --kumo-base: light-dark(#fff, oklch(17% 0 0));
+    --kumo-elevated: light-dark(oklch(98% 0 0), oklch(12% 0 0));
+    --kumo-recessed: light-dark(oklch(96% 0 0), oklch(15% 0 0));
+    --kumo-tint: light-dark(oklch(97% 0 0), oklch(26.9% 0 0));
+    --kumo-fill: light-dark(oklch(92.2% 0 0), oklch(26.9% 0 0));
+    --kumo-fill-hover: light-dark(oklch(96.5% 0 0), oklch(37.1% 0 0));
 
     /* strokes */
-    --kumo-line: oklch(14.5% 0 0 / 0.1);
-    --kumo-hairline: oklch(93.5% 0 0);
-    --kumo-focus: oklch(15% 0 0);
+    --kumo-line: light-dark(oklch(14.5% 0 0 / 0.1), oklch(32% 0 0));
+    --kumo-hairline: light-dark(oklch(93.5% 0 0), oklch(26.9% 0 0));
+    --kumo-focus: light-dark(oklch(15% 0 0), oklch(93.5% 0 0));
 
     /* text */
-    --kumo-text: oklch(21% 0.006 285.885);
-    --kumo-text-strong: oklch(14.5% 0 0);
-    --kumo-text-label: oklch(43.9% 0 0);
-    --kumo-text-subtle: oklch(55.6% 0 0);
-    --kumo-text-placeholder: oklch(70.8% 0 0);
-    --kumo-text-inverse: oklch(97% 0 0);
-    --kumo-link: oklch(42.4% 0.199 265.638);
+    --kumo-text: light-dark(oklch(21% 0.006 285.885), oklch(97% 0 0));
+    --kumo-text-strong: light-dark(oklch(14.5% 0 0), oklch(98.5% 0 0));
+    --kumo-text-label: light-dark(oklch(43.9% 0 0), oklch(70.8% 0 0));
+    --kumo-text-subtle: light-dark(oklch(55.6% 0 0), oklch(70.8% 0 0));
+    --kumo-text-placeholder: light-dark(oklch(70.8% 0 0), oklch(55.6% 0 0));
+    --kumo-text-inverse: light-dark(oklch(97% 0 0), oklch(20.5% 0 0));
+    --kumo-link: light-dark(oklch(42.4% 0.199 265.638), oklch(70.7% 0.165 254.624));
 
     /* brand: the blue primary action, plus the orange used for brand moments */
     --kumo-brand: oklch(57.72% 0.2324 260);
@@ -53,56 +68,23 @@
 
     /* semantic */
     --kumo-info: oklch(68.5% 0.169 237.323);
-    --kumo-info-tint: oklch(93.2% 0.032 255.585);
-    --kumo-info-text: oklch(42.4% 0.199 265.638);
+    --kumo-info-tint: light-dark(oklch(93.2% 0.032 255.585), oklch(28% 0.06 255.585));
+    --kumo-info-text: light-dark(oklch(42.4% 0.199 265.638), oklch(80% 0.12 255.585));
     --kumo-success: oklch(59.6% 0.145 163.225);
-    --kumo-success-tint: oklch(95% 0.052 163.051);
-    --kumo-success-text: oklch(43.2% 0.095 166.913);
+    --kumo-success-tint: light-dark(oklch(95% 0.052 163.051), oklch(26% 0.06 163.051));
+    --kumo-success-text: light-dark(oklch(43.2% 0.095 166.913), oklch(80% 0.12 163.051));
     --kumo-warning: oklch(79.5% 0.184 86.047);
-    --kumo-warning-tint: oklch(97.3% 0.071 103.193);
-    --kumo-warning-text: oklch(47.6% 0.114 61.907);
+    --kumo-warning-tint: light-dark(oklch(97.3% 0.071 103.193), oklch(28% 0.06 86.047));
+    --kumo-warning-text: light-dark(oklch(47.6% 0.114 61.907), oklch(85% 0.12 86.047));
     --kumo-danger: oklch(63.7% 0.237 25.331);
-    --kumo-danger-tint: oklch(93.6% 0.032 17.717);
-    --kumo-danger-text: oklch(50.5% 0.213 27.518);
+    --kumo-danger-tint: light-dark(oklch(93.6% 0.032 17.717), oklch(28% 0.07 17.717));
+    --kumo-danger-text: light-dark(oklch(50.5% 0.213 27.518), oklch(78% 0.14 25.331));
 
     /* elevation: a hairline ring, then a 1px drop. No soft shadows anywhere. */
-    --kumo-ring: 0 0 0 1px oklch(14.5% 0 0 / 0.1);
-    --kumo-ring-drop: 0 0 0 1px oklch(14.5% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.05);
+    --kumo-ring: light-dark(0 0 0 1px oklch(14.5% 0 0 / 0.1), 0 0 0 1px oklch(100% 0 0 / 0.1));
+    --kumo-ring-drop: light-dark(0 0 0 1px oklch(14.5% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.05), 0 0 0 1px oklch(100% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3));
   }
 
-  .dark {
-    --kumo-canvas: oklch(10% 0 0);
-    --kumo-base: oklch(17% 0 0);
-    --kumo-elevated: oklch(12% 0 0);
-    --kumo-recessed: oklch(15% 0 0);
-    --kumo-tint: oklch(26.9% 0 0);
-    --kumo-fill: oklch(26.9% 0 0);
-    --kumo-fill-hover: oklch(37.1% 0 0);
-
-    --kumo-line: oklch(32% 0 0);
-    --kumo-hairline: oklch(26.9% 0 0);
-    --kumo-focus: oklch(93.5% 0 0);
-
-    --kumo-text: oklch(97% 0 0);
-    --kumo-text-strong: oklch(98.5% 0 0);
-    --kumo-text-label: oklch(70.8% 0 0);
-    --kumo-text-subtle: oklch(70.8% 0 0);
-    --kumo-text-placeholder: oklch(55.6% 0 0);
-    --kumo-text-inverse: oklch(20.5% 0 0);
-    --kumo-link: oklch(70.7% 0.165 254.624);
-
-    --kumo-info-tint: oklch(28% 0.06 255.585);
-    --kumo-info-text: oklch(80% 0.12 255.585);
-    --kumo-success-tint: oklch(26% 0.06 163.051);
-    --kumo-success-text: oklch(80% 0.12 163.051);
-    --kumo-warning-tint: oklch(28% 0.06 86.047);
-    --kumo-warning-text: oklch(85% 0.12 86.047);
-    --kumo-danger-tint: oklch(28% 0.07 17.717);
-    --kumo-danger-text: oklch(78% 0.14 25.331);
-
-    --kumo-ring: 0 0 0 1px oklch(100% 0 0 / 0.1);
-    --kumo-ring-drop: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3);
-  }
 }
 
 /*
@@ -118,65 +100,51 @@
  */
 @layer base {
   :root {
-    --canvas: 98.75% 0 0;
-    --surface: 100% 0 0;
-    --surface-sidebar: 98% 0 0;
-    --surface-subtle: 98% 0 0;
-    --surface-raised: 100% 0 0;
-    --ink: 21% 0.006 285.885;
-    --ink-secondary: 43.9% 0 0;
-    --ink-tertiary: 55.6% 0 0;
-    --line-subtle: 93.5% 0 0;
-    --line: 87% 0 0;
-    --brand: 57.72% 0.2324 260;
-    --brand-hover: 48.8% 0.243 264.376;
-    --brand-soft: 93.2% 0.032 255.585;
-    --governed: 59.6% 0.145 163.225;
-    --governed-soft: 95% 0.052 163.051;
-    --partial: 79.5% 0.184 86.047;
-    --partial-soft: 97.3% 0.071 103.193;
-    --ready: 55.6% 0 0;
-    --ready-soft: 97% 0 0;
-    --danger: 63.7% 0.237 25.331;
-    --danger-soft: 93.6% 0.032 17.717;
+    /*
+     * One declaration per token, and `color-scheme` chooses the palette.
+     *
+     * Each value below is `light-dark(light, dark)`. The alternative — a
+     * `.dark` class redefining the same names — let the two palettes drift
+     * apart one token at a time, and it could not paint before JavaScript ran:
+     * the window opened light and flipped, because the CSP forbids the inline
+     * script that usually hides that.
+     *
+     * `light dark` means "follow the system unless told otherwise". `theme.ts`
+     * tells it otherwise by writing `color-scheme` on the root, and that one
+     * property is the entire mechanism.
+     */
+    color-scheme: light dark;
+
+    --canvas: light-dark(98.75% 0 0, 10% 0 0);
+    --surface: light-dark(100% 0 0, 17% 0 0);
+    --surface-sidebar: light-dark(98% 0 0, 12% 0 0);
+    --surface-subtle: light-dark(98% 0 0, 15% 0 0);
+    --surface-raised: light-dark(100% 0 0, 17% 0 0);
+    --ink: light-dark(21% 0.006 285.885, 97% 0 0);
+    --ink-secondary: light-dark(43.9% 0 0, 70.8% 0 0);
+    --ink-tertiary: light-dark(55.6% 0 0, 63% 0 0);
+    --line-subtle: light-dark(93.5% 0 0, 26.9% 0 0);
+    --line: light-dark(87% 0 0, 32% 0 0);
+    --brand: light-dark(57.72% 0.2324 260, 70% 0.17 260);
+    --brand-hover: light-dark(48.8% 0.243 264.376, 78% 0.15 260);
+    --brand-soft: light-dark(93.2% 0.032 255.585, 28% 0.06 255.585);
+    --governed: light-dark(59.6% 0.145 163.225, 72% 0.16 163.225);
+    --governed-soft: light-dark(95% 0.052 163.051, 26% 0.06 163.051);
+    --partial: light-dark(79.5% 0.184 86.047, 82% 0.15 86.047);
+    --partial-soft: light-dark(97.3% 0.071 103.193, 28% 0.06 86.047);
+    --ready: light-dark(55.6% 0 0, 63% 0 0);
+    --ready-soft: light-dark(97% 0 0, 26.9% 0 0);
+    --danger: light-dark(63.7% 0.237 25.331, 70% 0.19 25.331);
+    --danger-soft: light-dark(93.6% 0.032 17.717, 28% 0.07 17.717);
 
     /* Categorical chart ramp, kept in step with the Kumo semantics. */
-    --chart-1: oklch(57.72% 0.2324 260);
-    --chart-2: oklch(59.6% 0.145 163.225);
-    --chart-3: oklch(79.5% 0.184 86.047);
-    --chart-4: oklch(55% 0.22 300);
-    --chart-5: oklch(63.7% 0.237 25.331);
+    --chart-1: light-dark(oklch(57.72% 0.2324 260), oklch(70% 0.17 260));
+    --chart-2: light-dark(oklch(59.6% 0.145 163.225), oklch(72% 0.16 163.225));
+    --chart-3: light-dark(oklch(79.5% 0.184 86.047), oklch(82% 0.15 86.047));
+    --chart-4: light-dark(oklch(55% 0.22 300), oklch(70% 0.17 300));
+    --chart-5: light-dark(oklch(63.7% 0.237 25.331), oklch(70% 0.19 25.331));
   }
 
-  .dark {
-    --canvas: 10% 0 0;
-    --surface: 17% 0 0;
-    --surface-sidebar: 12% 0 0;
-    --surface-subtle: 15% 0 0;
-    --surface-raised: 17% 0 0;
-    --ink: 97% 0 0;
-    --ink-secondary: 70.8% 0 0;
-    --ink-tertiary: 63% 0 0;
-    --line-subtle: 26.9% 0 0;
-    --line: 32% 0 0;
-    --brand: 70% 0.17 260;
-    --brand-hover: 78% 0.15 260;
-    --brand-soft: 28% 0.06 255.585;
-    --governed: 72% 0.16 163.225;
-    --governed-soft: 26% 0.06 163.051;
-    --partial: 82% 0.15 86.047;
-    --partial-soft: 28% 0.06 86.047;
-    --ready: 63% 0 0;
-    --ready-soft: 26.9% 0 0;
-    --danger: 70% 0.19 25.331;
-    --danger-soft: 28% 0.07 17.717;
-
-    --chart-1: oklch(70% 0.17 260);
-    --chart-2: oklch(72% 0.16 163.225);
-    --chart-3: oklch(82% 0.15 86.047);
-    --chart-4: oklch(70% 0.17 300);
-    --chart-5: oklch(70% 0.19 25.331);
-  }
 }
 
 html,
