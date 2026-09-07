@@ -6,7 +6,7 @@ import type { Db } from "./db.js";
  * Named rather than free-form so a typo produces a type error instead of a
  * setting that silently never reads back.
  */
-export type SettingKey = "default_backend" | "whisper_model" | "update_channel" | "onboarded";
+export type SettingKey = "default_backend" | "whisper_model" | "update_channel" | "onboarded" | "theme";
 
 export interface SettingsStore {
   get(key: SettingKey): string | null;

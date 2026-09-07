@@ -94,8 +94,24 @@ describe("presets", () => {
     }
   });
 
-  it("stays short enough to read without scanning", () => {
-    expect(SCHEMA_PRESETS.length).toBeLessThanOrEqual(4);
+  it("keeps the four everyday starters separate from two focused research choices", () => {
+    expect(SCHEMA_PRESETS.filter((preset) => preset.category !== "research").map((preset) => preset.id)).toEqual(["talk", "meeting", "demo", "interview"]);
+    expect(SCHEMA_PRESETS.filter((preset) => preset.category === "research").map((preset) => preset.id)).toEqual(["technical-talk", "benchmark-comparison"]);
+  });
+
+  it("adds research starters without replacing the four general-purpose identities", () => {
+    expect(SCHEMA_PRESETS.map((preset) => preset.id)).toEqual(["talk", "meeting", "demo", "interview", "technical-talk", "benchmark-comparison"]);
+    expect(new Set(SCHEMA_PRESETS.map((preset) => fieldsFingerprint(preset.fields))).size).toBe(SCHEMA_PRESETS.length);
+    for (const preset of SCHEMA_PRESETS.filter((candidate) => candidate.id === "technical-talk" || candidate.id === "benchmark-comparison")) {
+      const schema = compileSchema(preset.fields) as { properties: Record<string, { type: string; description: string }> };
+      expect(fieldsFingerprint(decompileSchema(schema)!)).toBe(fieldsFingerprint(preset.fields));
+      expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining(["title", "key_claims", "metrics", "limitations", "source_context"]));
+      expect(schema.properties.metrics!.type).toBe("array");
+      expect(schema.properties.metrics!.description).toContain("never invent");
+      expect(schema.properties.source_context!.description).toContain("evidence envelope");
+      expect(schema.properties.source_context!.description).toContain("timestamps");
+      expect(schema.properties.limitations!.description).toContain("return []");
+    }
   });
 });
 

@@ -1,4 +1,6 @@
-import { compileSchema, type FieldSpec } from "@lirovo/core";
+import { compileSchema, fieldsFingerprint, SCHEMA_PRESETS, type FieldSpec } from "@lirovo/core";
+import { useState } from "react";
+import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import { FieldRows } from "./FieldRows";
 import { SchemaSelect, type SchemaChoice } from "./SchemaSelect";
 
@@ -26,33 +28,57 @@ export function SchemaPicker({
   onEdit: (fields: FieldSpec[]) => void;
   onManage: () => void;
 }): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const researchPreset = SCHEMA_PRESETS.some((preset) =>
+    (preset.id === "technical-talk" || preset.id === "benchmark-comparison") && fieldsFingerprint(preset.fields) === fieldsFingerprint(fields),
+  );
   return (
-    <div className="mt-6">
-      <p className="text-ink-label mb-2 text-center text-xs uppercase tracking-wide">What should it pull out?</p>
-
-      <div className="mx-auto mb-2 max-w-md">
-        <SchemaSelect
-          current={{ label, fieldCount: fields.length, version }}
-          onChoose={onChoose}
-          onManage={onManage}
-        />
+    <div className="bg-surface-subtle mx-3 rounded-t-2xl px-2 py-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <SchemaSelect
+            current={{ label, fieldCount: fields.length, version }}
+            onChoose={onChoose}
+            onManage={onManage}
+            placement="above"
+            compact
+          />
+        </div>
+        <button
+          aria-expanded={editing}
+          aria-controls="extraction-fields"
+          onClick={() => setEditing((value) => !value)}
+          className="text-ink-secondary hover:bg-fill flex h-8 items-center gap-2 rounded-lg px-2 text-sm"
+        >
+          <SlidersHorizontal className="size-3.5" /> Customize
+          <ChevronDown
+            className={`size-3 transition-transform ${editing ? "rotate-180" : ""}`}
+          />
+        </button>
       </div>
+      {researchPreset && <p className="px-2 pb-2 pt-1 text-xs leading-relaxed text-ink-subtle">Check a claim against its source, accept it, then export your findings. Matching benchmark names do not guarantee comparable results.</p>}
+      {editing && (
+        <div
+          id="extraction-fields"
+          className="mt-3 max-h-64 overflow-auto pb-2"
+        >
+          <FieldRows
+            fields={fields}
+            onChange={onEdit}
+            emptyNote="No fields. The video will be transcribed and its scenes detected, and nothing will be filled in."
+          />
 
-      <FieldRows
-        fields={fields}
-        onChange={onEdit}
-        emptyNote="No fields. The video will be transcribed and its scenes detected, and nothing will be filled in."
-      />
-
-      {fields.length > 0 && (
-        <details className="mt-2">
-          <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-center text-[11px] transition-colors">
-            Show the schema
-          </summary>
-          <pre className="bg-recessed text-ink-label mt-2 overflow-x-auto rounded-lg p-3 font-mono text-[11px] leading-relaxed">
-            {JSON.stringify(compileSchema(fields), null, 2)}
-          </pre>
-        </details>
+          {fields.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-ink-subtle hover:text-ink cursor-pointer list-none text-center text-[11px] transition-colors">
+                Show the schema
+              </summary>
+              <pre className="bg-recessed text-ink-label mt-2 overflow-x-auto rounded-lg p-3 font-mono text-[11px] leading-relaxed">
+                {JSON.stringify(compileSchema(fields), null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
       )}
     </div>
   );

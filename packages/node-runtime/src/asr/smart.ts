@@ -1,5 +1,6 @@
 import type { AsrRequest, AsrStrategy, Logger, Transcript } from "@lirovo/contracts";
 import { LirovoError } from "@lirovo/contracts";
+import { assertTranscriptQuality, TranscriptQualityError } from "./quality.js";
 
 /**
  * Try each strategy in order and take the first that succeeds.
@@ -24,18 +25,28 @@ export const createAsrChain = (strategies: readonly AsrStrategy[], logger?: Logg
     const reasons: string[] = [];
 
     for (const strategy of strategies) {
+      if (req.signal.aborted) throw new LirovoError("CANCELLED", "Transcription cancelled", { stage: "asr" });
       const available = await strategy.isAvailable(req).catch(() => false);
+      if (req.signal.aborted) throw new LirovoError("CANCELLED", "Transcription cancelled", { stage: "asr" });
       if (!available) {
         reasons.push(`${strategy.name}: unavailable`);
         continue;
       }
       try {
         const transcript = await strategy.transcribe(req);
+        if (req.signal.aborted) throw new LirovoError("CANCELLED", "Transcription cancelled", { stage: "asr" });
+        assertTranscriptQuality(transcript);
         logger?.info("transcribed", { engine: transcript.engine, segments: transcript.segments.length });
         return transcript;
       } catch (error) {
+        // A suspect result is not a transport failure and must not trigger
+        // another provider (or spend) without a new user decision.
+        if (error instanceof TranscriptQualityError) throw error;
         // Cancellation is the user's decision, not a strategy failing: stop
         // rather than moving down the chain and starting new work.
+        if (req.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+          throw new LirovoError("CANCELLED", "Transcription cancelled", { stage: "asr" });
+        }
         if (error instanceof LirovoError && error.code === "CANCELLED") throw error;
         const message = error instanceof Error ? error.message : String(error);
         logger?.warn("asr strategy failed", { strategy: strategy.name, message });

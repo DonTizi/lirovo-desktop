@@ -214,4 +214,56 @@ export const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 3,
+    statements: [
+      `CREATE TABLE review_corrections (
+        event_id TEXT PRIMARY KEY REFERENCES review_events(id) ON DELETE CASCADE,
+        value_json TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 4,
+    statements: [
+      `CREATE TABLE extraction_queue (
+        run_id TEXT PRIMARY KEY,
+        request_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued','running','interrupted','succeeded','failed','cancelled')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        error TEXT
+      )`,
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      `CREATE TABLE run_archives (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+        archived_at INTEGER NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 6,
+    statements: [
+      // Ingest can spawn tools before the source/run row exists. Keep this
+      // journal independent so recovery can also guard those early writers.
+      `CREATE TABLE extraction_processes (
+        run_id TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        host TEXT NOT NULL,
+        process_group INTEGER NOT NULL CHECK (process_group > 0),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (run_id, owner, process_group)
+      )`,
+    ],
+  },
+  {
+    version: 7,
+    statements: [
+      `ALTER TABLE extraction_processes ADD COLUMN owner_released INTEGER NOT NULL DEFAULT 0 CHECK (owner_released IN (0,1))`,
+    ],
+  },
 ];

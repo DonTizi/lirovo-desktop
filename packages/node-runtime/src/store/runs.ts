@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Run, RunStatus, SourceManifest, Stage } from "@lirovo/contracts";
 import { LirovoError, makeId } from "@lirovo/contracts";
 import type { Db } from "./db.js";
+import { assertNoExtractionProcesses, ownerProcessIsGone } from "./processes.js";
 
 /** How long a lease is good for before another process may take the run. */
 export const LEASE_MS = 60_000;
@@ -55,7 +56,24 @@ export interface RunStore {
 const nowS = (): number => Math.floor(Date.now() / 1000);
 const newId = (kind: Parameters<typeof makeId>[0]): string => makeId(kind, randomBytes(10));
 
-export const createRunStore = (db: Db): RunStore => ({
+/** Call inside the same write transaction as the mutation it fences. */
+export function assertRunOwnership(db: Db, runId: string, owner: string): void {
+  const held = db.prepare<[string, string, number], { id: string }>(
+    "SELECT id FROM runs WHERE id = ? AND lease_owner = ? AND lease_expires_at >= ? AND status IN ('running','claimed')",
+  ).get(runId, owner, nowS());
+  if (!held) throw new LirovoError("RUN_ALREADY_CLAIMED", "This process no longer holds the extraction lease. Its writes were refused.");
+}
+
+export const createRunStore = (db: Db, writerOwner?: string): RunStore => {
+  const mutate = <T>(runId: string, fn: () => T): T => {
+    let value!: T;
+    db.transaction(() => {
+      if (writerOwner !== undefined) assertRunOwnership(db, runId, writerOwner);
+      value = fn();
+    }).immediate();
+    return value;
+  };
+  return {
   upsertSource(manifest, uri) {
     // Same bytes, same source. Re-ingesting a file the user already annotated
     // should attach the new run to the existing source rather than fork it.
@@ -99,45 +117,61 @@ export const createRunStore = (db: Db): RunStore => ({
     // "running" forever, and any question like "what is still working" would
     // answer with ghosts. Closing them here is the only moment we know for
     // certain that nothing is.
-    db.prepare(
-      `UPDATE run_stage_attempts
-          SET status = 'failed', error_code = 'INTERRUPTED', error_message = 'the process died mid-stage', finished_at = ?
-        WHERE run_id = ? AND status = 'running'`,
-    ).run(nowS(), runId);
-
     // One statement, so two processes racing cannot both win: SQLite serialises
     // writers, and the WHERE clause makes the second one match zero rows.
-    const result = db
+    let claimed = false;
+    db.transaction(() => {
+      if (writerOwner !== undefined) {
+        assertNoExtractionProcesses(db, runId);
+        const previous = db.prepare<[string], { lease_owner: string | null }>("SELECT lease_owner FROM runs WHERE id = ?").get(runId);
+        if (previous?.lease_owner !== undefined && previous.lease_owner !== null) {
+          if (!ownerProcessIsGone(previous.lease_owner)) {
+            throw new LirovoError("RUN_ALREADY_CLAIMED", "The previous extraction process must exit before this run can resume, even if its lease expired.");
+          }
+          db.prepare("UPDATE runs SET lease_expires_at = 0 WHERE id = ?").run(runId);
+        }
+      }
+      const result = db
       .prepare(
         `UPDATE runs
-            SET status = 'running', lease_owner = ?, lease_expires_at = ?, started_at = COALESCE(started_at, ?)
+            SET status = 'running', lease_owner = ?, lease_expires_at = ?, started_at = COALESCE(started_at, ?),
+                finished_at = NULL, error_code = NULL, error_message = NULL
           WHERE id = ?
-            AND status IN ('claimed','running','failed')
+            AND status IN ('claimed','running','failed','cancelled')
             AND (lease_owner IS NULL OR lease_owner = ? OR lease_expires_at < ?)`,
       )
       .run(owner, nowS() + Math.floor(LEASE_MS / 1000), nowS(), runId, owner, nowS());
-    return result.changes === 1;
+      claimed = result.changes === 1;
+      if (!claimed) return;
+      // Only the winner may close attempts. A failed claimant must not mutate
+      // the live owner's history.
+      db.prepare(`UPDATE run_stage_attempts
+        SET status = 'failed', error_code = 'INTERRUPTED', error_message = 'the process stopped mid-stage', finished_at = ?
+        WHERE run_id = ? AND status = 'running'`).run(nowS(), runId);
+    }).immediate();
+    return claimed;
   },
 
   renewLease(runId, owner) {
     const result = db
-      .prepare("UPDATE runs SET lease_expires_at = ? WHERE id = ? AND lease_owner = ?")
-      .run(nowS() + Math.floor(LEASE_MS / 1000), runId, owner);
+      .prepare("UPDATE runs SET lease_expires_at = ? WHERE id = ? AND lease_owner = ? AND lease_expires_at >= ?")
+      .run(nowS() + Math.floor(LEASE_MS / 1000), runId, owner, nowS());
     return result.changes === 1;
   },
 
   finish(runId, status, error) {
-    db.prepare(
+    mutate(runId, () => db.prepare(
       `UPDATE runs SET status = ?, error_code = ?, error_message = ?, finished_at = ?, lease_owner = NULL, lease_expires_at = NULL
         WHERE id = ?`,
-    ).run(status, error?.code ?? null, error?.message ?? null, nowS(), runId);
+    ).run(status, error?.code ?? null, error?.message ?? null, nowS(), runId));
   },
 
   setStagePointer(runId, stage) {
-    db.prepare("UPDATE runs SET stage_pointer = ? WHERE id = ?").run(stage, runId);
+    mutate(runId, () => db.prepare("UPDATE runs SET stage_pointer = ? WHERE id = ?").run(stage, runId));
   },
 
   beginAttempt(runId, stage, inputHash) {
+    return mutate(runId, () => {
     const previous = db
       .prepare<[string, string], { n: number }>(
         "SELECT COALESCE(MAX(attempt), 0) AS n FROM run_stage_attempts WHERE run_id = ? AND stage = ?",
@@ -149,10 +183,11 @@ export const createRunStore = (db: Db): RunStore => ({
        VALUES (?, ?, ?, ?, 'running', ?)`,
     ).run(runId, stage, attempt, inputHash, nowS());
     return attempt;
+    });
   },
 
   completeAttempt(runId, stage, attempt, outcome) {
-    db.prepare(
+    mutate(runId, () => db.prepare(
       `UPDATE run_stage_attempts
           SET status = ?, output_json = ?, error_code = ?, error_message = ?, finished_at = ?
         WHERE run_id = ? AND stage = ? AND attempt = ?`,
@@ -165,7 +200,7 @@ export const createRunStore = (db: Db): RunStore => ({
       runId,
       stage,
       attempt,
-    );
+    ));
   },
 
   cachedStageOutput(runId, stage, inputHash) {
@@ -190,14 +225,15 @@ export const createRunStore = (db: Db): RunStore => ({
   },
 
   recordArtifact(runId, kind, relPath, sha256, bytes, contentType) {
-    db.prepare(
+    mutate(runId, () => db.prepare(
       `INSERT INTO artifacts (id, run_id, kind, rel_path, sha256, bytes, content_type, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (run_id, rel_path) DO UPDATE SET
          sha256 = excluded.sha256, bytes = excluded.bytes, created_at = excluded.created_at`,
-    ).run(newId("artifact"), runId, kind, relPath, sha256, bytes, contentType, nowS());
+    ).run(newId("artifact"), runId, kind, relPath, sha256, bytes, contentType, nowS()));
   },
-});
+  };
+};
 
 /**
  * Hold the lease for as long as the work takes.

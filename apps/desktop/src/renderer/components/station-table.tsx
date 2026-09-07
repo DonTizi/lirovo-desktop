@@ -191,7 +191,12 @@ export function ColumnPicker<T>({
                       <span
                         className={cn(
                           "grid size-4 shrink-0 place-items-center rounded border transition-colors",
-                          on ? "bg-ink-strong border-ink-strong text-white" : "border-line text-transparent",
+                          // `text-base`, not `text-white`. The tick sits on
+                          // `ink-strong`, which is near-black in light and
+                          // near-white in dark — white on it would have been
+                          // invisible in one theme and fine in the other,
+                          // which is exactly what a hardcoded colour buys.
+                          on ? "bg-ink-strong border-ink-strong text-base" : "border-line text-transparent",
                         )}
                       >
                         <Check className="size-3" strokeWidth={3} />

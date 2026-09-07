@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from "electron";
+import {
+  BrowserWindow,
+  app,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  shell,
+  utilityProcess,
+  type UtilityProcess,
+} from "electron";
 import {
   CHANNELS,
   defaultBackendSchema,
@@ -10,19 +20,45 @@ import {
   installSchema,
   purgeSchema,
   revealSchema,
+  themeSchema,
   updateChannelSchema,
   inspectRequestSchema,
   runFixSchema,
   runIdSchema,
   saveSchemaRequestSchema,
   schemaIdSchema,
+  reviewMutationSchema,
+  reviewHistorySchema,
+  knowledgeQuerySchema,
+  knowledgeComparisonSchema,
+  exportRunSchema,
+  askKnowledgeSchema,
+  cancelKnowledgeSchema,
+  archiveRunSchema,
 } from "./ipc.js";
 
 import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
-import { checkNow, currentVersion, downloadUpdate, installUpdate, setChannel, startUpdater, type UpdateChannel } from "./updater.js";
+import {
+  checkNow,
+  currentVersion,
+  downloadUpdate,
+  installUpdate,
+  setChannel,
+  startUpdater,
+  type UpdateChannel,
+} from "./updater.js";
 import type { EngineMessage } from "./engine-protocol.js";
+import { saveExportFile } from "./export-file.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const requestedLibraryRoot = process.env["LIROVO_DATA_DIR"] ?? path.join(app.getPath("home"), "Library", "Application Support", "Lirovo");
+mkdirSync(requestedLibraryRoot, { recursive: true });
+const libraryRoot = realpathSync(requestedLibraryRoot);
+process.env["LIROVO_DATA_DIR"] = libraryRoot;
+const profile = path.join(libraryRoot, "desktop");
+mkdirSync(profile, { recursive: true });
+app.setPath("userData", profile);
+if (!app.requestSingleInstanceLock()) app.exit(0);
 
 // Before `whenReady`, which is the only moment a privileged scheme may be
 // declared. Everything else about the protocol is set up after.
@@ -31,7 +67,15 @@ const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
 
 let window: BrowserWindow | null = null;
 let engine: UtilityProcess | null = null;
-const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+app.on("second-instance", () => {
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+});
+const pending = new Map<
+  string,
+  { resolve: (v: unknown) => void; reject: (e: Error) => void }
+>();
 
 /**
  * Start, and keep, the engine process.
@@ -41,7 +85,9 @@ const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Err
  * spinner that never stops and a user who has no idea anything went wrong.
  */
 const startEngine = (): UtilityProcess => {
-  const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], { stdio: "inherit" });
+  const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], {
+    stdio: "inherit",
+  });
 
   child.on("message", (message: unknown) => {
     const msg = message as EngineMessage;
@@ -61,7 +107,10 @@ const startEngine = (): UtilityProcess => {
     if (waiting === undefined) return;
     pending.delete(msg.id);
     if (msg.kind === "result") waiting.resolve(msg.value);
-    else waiting.reject(Object.assign(new Error(msg.error.message), { code: msg.error.code }));
+    else
+      waiting.reject(
+        Object.assign(new Error(msg.error.message), { code: msg.error.code }),
+      );
   });
 
   child.on("exit", () => {
@@ -85,12 +134,23 @@ const ask = <T>(message: Record<string, unknown>): Promise<T> => {
 };
 
 /** Nothing throws across the bridge; every call answers with a discriminated result. */
-const result = async <T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: { code: string; message: string } }> => {
+const result = async <T>(
+  fn: () => Promise<T>,
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; error: { code: string; message: string } }
+> => {
   try {
     return { ok: true, value: await fn() };
   } catch (error) {
     const code = (error as { code?: string }).code ?? "INTERNAL";
-    return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) } };
+    return {
+      ok: false,
+      error: {
+        code,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
   }
 };
 
@@ -100,7 +160,10 @@ const createWindow = (): void => {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: "#101012",
+    backgroundColor: process.platform === "darwin" ? "#00000000" : "#181818",
+    ...(process.platform === "darwin"
+      ? { vibrancy: "sidebar" as const, visualEffectState: "active" as const }
+      : {}),
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload: path.join(here, "../preload/index.cjs"),
@@ -139,12 +202,16 @@ const createWindow = (): void => {
  * devtools context reaching them would be reaching ffmpeg.
  */
 const fromMainFrame = (event: Electron.IpcMainInvokeEvent): boolean =>
-  event.senderFrame !== null && event.senderFrame.parent === null;
+  event.sender === window?.webContents && event.senderFrame !== null && event.senderFrame === event.sender.mainFrame;
 
 const guard =
   <T>(handler: (payload: unknown) => Promise<T>) =>
   async (event: Electron.IpcMainInvokeEvent, payload: unknown) => {
-    if (!fromMainFrame(event)) return { ok: false, error: { code: "FORBIDDEN", message: "not the main frame" } };
+    if (!fromMainFrame(event))
+      return {
+        ok: false,
+        error: { code: "FORBIDDEN", message: "not the main frame" },
+      };
     return result(() => handler(payload));
   };
 
@@ -168,11 +235,68 @@ let channelAtBoot: UpdateChannel = "latest";
 
 app.whenReady().then(() => {
   installMediaProtocol();
+  ipcMain.handle(CHANNELS.archiveRun,guard(payload=>ask({type:"archiveRun",...archiveRunSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.archivedRuns,guard(()=>ask({type:"archivedRuns"})));
+  ipcMain.handle(CHANNELS.backupLibrary,guard(async()=>{
+    const selected = await dialog.showOpenDialog({title:"Choose where to create a new Lirovo backup",properties:["openDirectory","createDirectory"]});
+    if(selected.canceled || !selected.filePaths[0]) return {cancelled:true};
+    const parent = realpathSync(selected.filePaths[0]);
+    const destination = path.join(parent,`Lirovo-backup-${new Date().toISOString().replace(/[:.]/g,"-")}-${randomUUID()}`);
+    const transfer = await ask({type:"backupLibrary",destination});
+    return {cancelled:false,transfer};
+  }));
+  ipcMain.handle(CHANNELS.restoreLibrary,guard(async()=>{
+    const source = await dialog.showOpenDialog({title:"Choose a Lirovo backup folder",properties:["openDirectory"]});
+    if(source.canceled || !source.filePaths[0]) return {cancelled:true};
+    const selected = await dialog.showOpenDialog({title:"Restore as a new library — your current library will not change",properties:["openDirectory","createDirectory"]});
+    if(selected.canceled || !selected.filePaths[0]) return {cancelled:true};
+    const parent = realpathSync(selected.filePaths[0]);
+    const destination = path.join(parent,`Lirovo-restored-${new Date().toISOString().replace(/[:.]/g,"-")}-${randomUUID()}`);
+    const transfer = await ask({type:"restoreLibrary",backupDirectory:realpathSync(source.filePaths[0]),destination});
+    return {cancelled:false,transfer};
+  }));
+  ipcMain.handle(CHANNELS.askKnowledge,guard(payload=>ask({type:"askKnowledge",input:askKnowledgeSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.cancelKnowledge,guard(payload=>ask({type:"cancelKnowledge",...cancelKnowledgeSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.exportRun, guard(async(payload)=>{
+    const request=exportRunSchema.parse(payload);
+    if (request.options.format === "folder") {
+      const selected = await dialog.showOpenDialog({ title: "Choose where to save the complete extraction folder", properties: ["openDirectory", "createDirectory"] });
+      if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
+      const parent = realpathSync(selected.filePaths[0]);
+      const destination = path.join(parent, `Lirovo-extraction-${randomUUID()}`);
+      const exported = await ask<import("@lirovo/node-runtime").RunFolderExport>({ type: "exportRunFolder", runId: request.runId, destination, protectedRoots: [libraryRoot, app.getPath("userData"), realpathSync(app.getAppPath())] });
+      return { cancelled: false, ...exported };
+    }
+    const artifact=await ask<{content:string;mime:string;extension:string;suggestedName:string}>({type:"exportRun",...request});
+    const extension=request.options.format==="markdown"?"md":request.options.format;
+    const selected=await dialog.showSaveDialog({title:"Export extraction",defaultPath:path.basename(artifact.suggestedName),filters:[{name:request.options.format.toUpperCase(),extensions:[extension]}]});
+    if(selected.canceled||!selected.filePath)return {cancelled:true};
+    await saveExportFile(selected.filePath, artifact.content, [libraryRoot, app.getPath("userData"), app.getAppPath()]);
+    return {cancelled:false};
+  }));
+  ipcMain.handle(CHANNELS.searchKnowledge, guard((payload) => ask({type: "searchKnowledge", input: knowledgeQuerySchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.compareKnowledge, guard((payload) => ask({type: "compareKnowledge", ...knowledgeComparisonSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.listQueue, guard(() => ask({type: "listQueue"})));
+  ipcMain.handle(CHANNELS.resumeRun, guard((payload) => ask({type: "resumeRun", ...runIdSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.cancelQueuedRun, guard((payload) => ask({type: "cancelQueuedRun", ...runIdSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.reviewValue, guard((payload) => ask({type: "reviewValue", input: reviewMutationSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.reviewHistory, guard((payload) => ask({type: "reviewHistory", ...reviewHistorySchema.parse(payload)})));
 
-  void ask<{ updateChannel: UpdateChannel }>({ type: "preferences" })
+  void ask<{
+    updateChannel: UpdateChannel;
+    theme: "system" | "light" | "dark";
+  }>({ type: "preferences" })
     .then((prefs) => {
       channelAtBoot = prefs.updateChannel;
       setChannel(channelAtBoot);
+      // At boot too, not only when it is changed.
+      //
+      // Without this line the window came back dark — the renderer reads the
+      // same setting — while `themeSource` had reset to `system`, so the title
+      // bar and the scrollbars were light around it. A theme that is only
+      // applied on the click that sets it is a theme that is right once and
+      // wrong every launch after.
+      nativeTheme.themeSource = prefs.theme;
     })
     .catch(() => undefined);
 
@@ -181,50 +305,92 @@ app.whenReady().then(() => {
     canRestart: () => !busy,
     channel: () => channelAtBoot,
   });
-  ipcMain.handle(CHANNELS.doctor, guard(() => ask({ type: "doctor" })));
-  ipcMain.handle(CHANNELS.listRuns, guard(() => ask({ type: "listRuns" })));
+  ipcMain.handle(
+    CHANNELS.doctor,
+    guard(() => ask({ type: "doctor" })),
+  );
+  ipcMain.handle(
+    CHANNELS.listRuns,
+    guard(() => ask({ type: "listRuns" })),
+  );
 
   ipcMain.handle(
     CHANNELS.runDetail,
-    guard((payload) => ask({ type: "runDetail", runId: runIdSchema.parse(payload).runId })),
+    guard((payload) =>
+      ask({ type: "runDetail", runId: runIdSchema.parse(payload).runId }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.extract,
-    guard((payload) => ask({ type: "extract", request: extractRequestSchema.parse(payload) })),
+    guard((payload) =>
+      ask({ type: "extract", request: extractRequestSchema.parse(payload) }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.inspect,
-    guard((payload) => ask({ type: "inspect", source: inspectRequestSchema.parse(payload).source })),
+    guard((payload) =>
+      ask({
+        type: "inspect",
+        source: inspectRequestSchema.parse(payload).source,
+      }),
+    ),
   );
 
-  ipcMain.handle(CHANNELS.listSchemas, guard(() => ask({ type: "listSchemas" })));
+  ipcMain.handle(
+    CHANNELS.listSchemas,
+    guard(() => ask({ type: "listSchemas" })),
+  );
   ipcMain.handle(
     CHANNELS.saveSchema,
-    guard((payload) => ask({ type: "saveSchema", input: saveSchemaRequestSchema.parse(payload) })),
+    guard((payload) =>
+      ask({
+        type: "saveSchema",
+        input: saveSchemaRequestSchema.parse(payload),
+      }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.schemaRevisions,
-    guard((payload) => ask({ type: "schemaRevisions", schemaId: schemaIdSchema.parse(payload).schemaId })),
+    guard((payload) =>
+      ask({
+        type: "schemaRevisions",
+        schemaId: schemaIdSchema.parse(payload).schemaId,
+      }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.archiveSchema,
-    guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
+    guard((payload) =>
+      ask({
+        type: "archiveSchema",
+        schemaId: schemaIdSchema.parse(payload).schemaId,
+      }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.runArtifacts,
-    guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId })),
+    guard((payload) =>
+      ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.install,
     guard((payload) => {
       const { what, model } = installSchema.parse(payload);
-      return ask({ type: "install", what, ...(model === undefined ? {} : { model }) });
+      return ask({
+        type: "install",
+        what,
+        ...(model === undefined ? {} : { model }),
+      });
     }),
   );
-  ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
+  ipcMain.handle(
+    CHANNELS.storage,
+    guard(() => ask({ type: "storage" })),
+  );
 
   // --- updates -------------------------------------------------------------
   //
@@ -236,8 +402,14 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.updateState,
     guard(async () => {
-      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
-      return { version: currentVersion(), channel: prefs.updateChannel, supported: app.isPackaged };
+      const prefs = (await ask({ type: "preferences" })) as {
+        updateChannel: UpdateChannel;
+      };
+      return {
+        version: currentVersion(),
+        channel: prefs.updateChannel,
+        supported: app.isPackaged,
+      };
     }),
   );
   ipcMain.handle(
@@ -246,12 +418,20 @@ app.whenReady().then(() => {
       // The channel decides the wording of a failure — "no stable release yet"
       // only makes sense to someone on stable — so it is read here rather than
       // guessed inside the updater.
-      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
+      const prefs = (await ask({ type: "preferences" })) as {
+        updateChannel: UpdateChannel;
+      };
       return checkNow(prefs.updateChannel);
     }),
   );
-  ipcMain.handle(CHANNELS.updateDownload, guard(() => downloadUpdate()));
-  ipcMain.handle(CHANNELS.updateInstall, guard(async () => installUpdate(() => !busy)));
+  ipcMain.handle(
+    CHANNELS.updateDownload,
+    guard(() => downloadUpdate()),
+  );
+  ipcMain.handle(
+    CHANNELS.updateInstall,
+    guard(async () => installUpdate(() => !busy)),
+  );
   ipcMain.handle(
     CHANNELS.updateChannel,
     guard(async (payload) => {
@@ -259,6 +439,19 @@ app.whenReady().then(() => {
       setChannel(channel);
       await ask({ type: "setUpdateChannel", channel });
       return { version: currentVersion(), channel, supported: app.isPackaged };
+    }),
+  );
+  ipcMain.handle(
+    CHANNELS.setTheme,
+    guard(async (payload) => {
+      const { theme } = themeSchema.parse(payload);
+      // Electron paints the parts of the window this app does not: the title
+      // bar, the scrollbars, the space behind an overscroll. Left alone they
+      // stay light around a dark app, which is the detail that makes a theme
+      // look half-applied. `system` hands the decision back to macOS, which is
+      // exactly what `themeSource` means.
+      nativeTheme.themeSource = theme;
+      return ask({ type: "setTheme", theme });
     }),
   );
   ipcMain.handle(
@@ -282,18 +475,28 @@ app.whenReady().then(() => {
     guard(async (payload) => {
       const { what } = purgeSchema.parse(payload);
       const everything = what === "everything";
-      const { response } = await dialog.showMessageBox(window as BrowserWindow, {
-        type: "warning",
-        buttons: ["Cancel", everything ? "Delete everything" : "Delete extractions"],
-        defaultId: 0,
-        cancelId: 0,
-        message: everything ? "Delete everything Lirovo has stored?" : "Delete every extraction?",
-        detail: everything
-          ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
-          : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
-      });
+      const { response } = await dialog.showMessageBox(
+        window as BrowserWindow,
+        {
+          type: "warning",
+          buttons: [
+            "Cancel",
+            everything ? "Delete everything" : "Delete extractions",
+          ],
+          defaultId: 0,
+          cancelId: 0,
+          message: everything
+            ? "Delete everything Lirovo has stored?"
+            : "Delete every extraction?",
+          detail: everything
+            ? "Every extraction, schema, setting, downloaded speech model and binary this app installed will be removed. An empty metadata database is retained for safe process coordination; application cache files are not included. This is not secure erasure and cannot be undone without a backup."
+            : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
+        },
+      );
       if (response !== 1) return { cancelled: true, freedBytes: 0 };
-      const result = (await ask({ type: "purge", what })) as { freedBytes: number };
+      const result = (await ask({ type: "purge", what })) as {
+        freedBytes: number;
+      };
       return { cancelled: false, ...result };
     }),
   );
@@ -307,14 +510,21 @@ app.whenReady().then(() => {
       const { resolvePaths } = await import("@lirovo/node-runtime");
       const root = resolvePaths().data;
       const resolved = path.resolve(target);
-      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return { revealed: false };
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`))
+        return { revealed: false };
       shell.showItemInFolder(resolved);
       return { revealed: true };
     }),
   );
 
-  ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
-  ipcMain.handle(CHANNELS.markOnboarded, guard(() => ask({ type: "markOnboarded" })));
+  ipcMain.handle(
+    CHANNELS.preferences,
+    guard(() => ask({ type: "preferences" })),
+  );
+  ipcMain.handle(
+    CHANNELS.markOnboarded,
+    guard(() => ask({ type: "markOnboarded" })),
+  );
   ipcMain.handle(
     CHANNELS.runFix,
     guard((payload) => {
@@ -328,17 +538,39 @@ app.whenReady().then(() => {
   );
   ipcMain.handle(
     CHANNELS.setDefaultBackend,
-    guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),
+    guard((payload) =>
+      ask({
+        type: "setDefaultBackend",
+        backendId: defaultBackendSchema.parse(payload).backendId,
+      }),
+    ),
   );
 
-  ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));
+  ipcMain.handle(
+    CHANNELS.cancel,
+    guard(() => ask({ type: "cancel" })),
+  );
 
   ipcMain.handle(
     CHANNELS.pickFile,
     guard(async () => {
       const picked = await dialog.showOpenDialog({
         properties: ["openFile"],
-        filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "mkv", "webm", "m4a", "mp3", "wav", "flac"] }],
+        filters: [
+          {
+            name: "Video or audio",
+            extensions: [
+              "mp4",
+              "mov",
+              "mkv",
+              "webm",
+              "m4a",
+              "mp3",
+              "wav",
+              "flac",
+            ],
+          },
+        ],
       });
       return picked.canceled ? null : (picked.filePaths[0] ?? null);
     }),
@@ -351,6 +583,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  engine?.kill();
   if (process.platform !== "darwin") app.quit();
 });
+app.on("will-quit", () => { engine?.kill(); });

@@ -12,6 +12,9 @@ import "./globals.css";
  */
 if (navigator.platform.startsWith("Mac")) {
   document.documentElement.style.setProperty("--liq-traffic-inset", "78px");
+  if (navigator.userAgent.includes("Electron/")) {
+    document.documentElement.dataset.nativeMaterial = "sidebar";
+  }
 }
 
 const root = document.getElementById("root");

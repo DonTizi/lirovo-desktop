@@ -3,6 +3,7 @@ import type { SourceManifest } from "@lirovo/contracts";
 import { openMemoryDatabase, type Db } from "./db.js";
 import { MIGRATIONS } from "./migrations.js";
 import { createRunStore, type RunStore } from "./runs.js";
+import { persistExtraction, persistManifest } from "./results.js";
 
 const manifest = (sha: string | null, title = "talk"): SourceManifest => ({
   source_type: "file",
@@ -45,6 +46,35 @@ describe("run store", () => {
   });
 
   describe("leases", () => {
+    it("fences every stale writer mutation after another process takes an expired lease", () => {
+      const a = createRunStore(db, "process-a"), b = createRunStore(db, "process-b");
+      const source = a.upsertSource(manifest("fence"), "/tmp/fence.mp4");
+      a.createRun("run_fence", source, null, "process-a");
+      const attempt = a.beginAttempt("run_fence", "asr", "hash");
+      db.exec("UPDATE runs SET lease_expires_at = 0 WHERE id = 'run_fence'");
+      expect(a.renewLease("run_fence", "process-a")).toBe(false);
+      expect(store.claim("run_fence", "process-b")).toBe(true);
+      const mutations = [
+        () => a.finish("run_fence", "failed"),
+        () => a.setStagePointer("run_fence", "reason"),
+        () => a.beginAttempt("run_fence", "reason", "new"),
+        () => a.completeAttempt("run_fence", "asr", attempt, { status: "done", output: { text: "stale" } }),
+        () => a.recordArtifact("run_fence", "text", "stale.txt", "abc", 3, "text/plain"),
+        () => persistExtraction(db, { runId: "run_fence", owner: "process-a", data: { title: "stale" }, evidenceByField: new Map() }),
+        () => persistManifest(db, { runId: "run_fence", sourceSha256: null, schemaRevisionId: null, schemaJson: null,
+          prompts: {}, asrEngine: null, asrModel: null, inferenceBackend: null, inferenceModel: null,
+          backendVersion: null, dependencyVersions: {}, settings: {}, createdAt: 1 }, "process-a"),
+      ];
+      for (const mutate of mutations) expect(mutate).toThrow(/no longer holds/);
+      expect(db.prepare("SELECT status, lease_owner, stage_pointer FROM runs WHERE id = 'run_fence'").get())
+        .toEqual({ status: "running", lease_owner: "process-b", stage_pointer: null });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM extracted_values").get()?.n).toBe(0);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM run_manifests").get()?.n).toBe(0);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM artifacts").get()?.n).toBe(0);
+      expect(b.renewLease("run_fence", "process-b")).toBe(true);
+      b.finish("run_fence", "succeeded");
+    });
+
     it("lets the holder renew and refuses a stranger", () => {
       const source = store.upsertSource(manifest("abc"), "/tmp/talk.mp4");
       const run = store.createRun("run_testa", source, null, "process-a");
@@ -57,7 +87,9 @@ describe("run store", () => {
       // both would run the same pipeline into the same artifact directory.
       const source = store.upsertSource(manifest("abc"), "/tmp/talk.mp4");
       const run = store.createRun("run_testa", source, null, "process-a");
+      store.beginAttempt(run.id, "asr", "hash");
       expect(store.claim(run.id, "process-b")).toBe(false);
+      expect(db.prepare("SELECT status FROM run_stage_attempts WHERE run_id = ?").get(run.id)?.status).toBe("running");
       expect(store.claim(run.id, "process-a")).toBe(true);
     });
 
@@ -74,6 +106,15 @@ describe("run store", () => {
       const run = store.createRun("run_testa", source, null, "process-a");
       store.finish(run.id, "succeeded");
       expect(store.getRun(run.id)?.leaseOwner ?? store.getRun(run.id)?.lease_owner).toBeNull();
+    });
+    it("can explicitly resume cancelled work but never successful work", () => {
+      const source = store.upsertSource(manifest("abc"), "/tmp/talk.mp4");
+      store.createRun("run_resume", source, null, "a");
+      store.finish("run_resume", "cancelled", { code: "CANCELLED", message: "Stopped" });
+      expect(store.claim("run_resume", "b")).toBe(true);
+      expect(db.prepare("SELECT error_code, finished_at FROM runs WHERE id='run_resume'").get()).toEqual({ error_code: null, finished_at: null });
+      store.finish("run_resume", "succeeded");
+      expect(store.claim("run_resume", "c")).toBe(false);
     });
   });
 

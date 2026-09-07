@@ -35,6 +35,8 @@ export interface SchemaPreset {
   readonly label: string;
   /** What this preset is FOR, in the words of someone choosing it. */
   readonly about: string;
+  /** Omitted for the original everyday starters; presentation only, not schema identity. */
+  readonly category?: "research";
   readonly fields: readonly FieldSpec[];
 }
 
@@ -137,8 +139,8 @@ export const decompileSchema = (schema: unknown): FieldSpec[] | null => {
 /**
  * Starting points, not a catalogue.
  *
- * Four, because a list long enough to need scanning is a list that costs more
- * to read than the fields cost to type.
+ * Keep the general starters stable; focused research presets share the same
+ * visual-field compiler instead of introducing a second schema format.
  */
 export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
   {
@@ -188,6 +190,34 @@ export const SCHEMA_PRESETS: readonly SchemaPreset[] = [
       { name: "summary", kind: "text", description: "what the person interviewed was asked about, and what they conveyed" },
       { name: "quotes", kind: "list", description: "sentences worth reproducing verbatim, copied exactly as spoken" },
       { name: "requests", kind: "list", description: "things the person asked for or said they needed" },
+    ],
+  },
+  {
+    id: "technical-talk",
+    category: "research",
+    label: "Technical research",
+    about: "claims, measurements and caveats to verify before reusing",
+    fields: [
+      { name: "title", kind: "text", description: "the technical subject in one line, using only information in the source; use an empty string if unknown" },
+      { name: "topics", kind: "list", description: "technical concepts and named systems actually discussed, in source order; preserve versions when stated; return [] when absent" },
+      { name: "key claims", kind: "list", description: "one complete technical assertion per item, preserving named speaker or organization attribution; distinguish what was demonstrated from what was merely claimed or attributed to others; do not treat source claims as independently verified facts; return [] when absent" },
+      { name: "metrics", kind: "list", description: "one complete stated measurement per item with system/version, metric, exact value and unit, workload, setup and attribution when given; explicitly mark missing conditions as not stated; never invent, convert or aggregate scores; return [] if no measurements are stated" },
+      { name: "limitations", kind: "list", description: "caveats, trade-offs, failure cases and scope restrictions explicitly described by the source, retaining attribution; do not infer new limitations or treat absence as proof of safety; return [] when none are stated" },
+      { name: "source context", kind: "list", description: "speakers, organizations, papers, versions and sponsorship disclosures explicitly named in this source; preserve their relationship to the claims; never invent authors, publication dates, URLs or timestamps; exact source-time references belong in the evidence envelope; return [] when absent" },
+    ],
+  },
+  {
+    id: "benchmark-comparison",
+    category: "research",
+    label: "Benchmark comparison",
+    about: "scores with their setup, attribution and comparison limits",
+    fields: [
+      { name: "title", kind: "text", description: "what systems or benchmarks this source discusses in one line; do not declare an overall winner; use an empty string if unknown" },
+      { name: "systems", kind: "list", description: "systems or models compared, with exact version and configuration when stated; distinguish variants rather than merging similar names; return [] when absent" },
+      { name: "key claims", kind: "list", description: "comparison claims explicitly made in this source with named attribution and stated scope; keep speaker opinion distinct from demonstrated measurements; never infer a ranking, a winner or superiority across different setups; return [] when absent" },
+      { name: "metrics", kind: "list", description: "one complete benchmark observation per item: system/version, benchmark/version, exact score and unit, evaluation setup, sample or split, date and attribution when stated; mark missing conditions as not stated; preserve percentages and units exactly; never invent missing scores, normalize or aggregate incompatible measurements; return [] when absent" },
+      { name: "limitations", kind: "list", description: "source-stated comparability limits: dataset or split differences, evaluation conditions, uncertainty, benchmark coverage, missing methodology and caveats; retain attribution and do not invent a caveat or imply two scores are comparable merely because their labels match; return [] when absent" },
+      { name: "source context", kind: "list", description: "named presenters, benchmark publishers, papers and sponsorship disclosures actually cited by this source; distinguish original reported results from presenter commentary; never invent references, URLs, dates or timestamps; exact source-time references belong in the evidence envelope; return [] when absent" },
     ],
   },
 ];

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AsrRequest, AsrStrategy, Transcript, TranscriptSegment } from "@lirovo/contracts";
 import { LirovoError } from "@lirovo/contracts";
+import { assertTranscriptQuality } from "./quality.js";
 
 /** Placeholder keys are common in copied .env files and produce a confusing 401. */
 const PLACEHOLDER = /^(sk-)?(your|xxx+|replace|changeme|todo|placeholder)/i;
@@ -39,12 +40,14 @@ export const parseVerboseJson = (payload: VerboseJson): { segments: TranscriptSe
   for (const raw of payload.segments ?? []) {
     const text = (raw.text ?? "").trim();
     if (text === "") continue;
-    const tEnd = raw.end ?? 0;
+    // Missing offsets are unknown evidence, not speech at the start of a clip.
+    // Keep them invalid so the shared quality gate rejects the candidate.
+    const tEnd = raw.end ?? NaN;
     durationS = Math.max(durationS, tEnd);
     segments.push({
       id: `seg_${segments.length}`,
       speaker: null,
-      tStart: raw.start ?? 0,
+      tStart: raw.start ?? NaN,
       tEnd,
       text,
       words: [],
@@ -61,9 +64,9 @@ export interface WhisperApiDeps {
 /**
  * Hosted Whisper, last in the chain and opt-in.
  *
- * It only becomes available when the user has deliberately exported a key, and
- * it is the only ASR path that sends audio off the machine — which is exactly
- * why it never runs unless the two local links have both declined.
+ * A key makes the adapter available, but the production chain includes it only
+ * after explicit per-run consent. Merely exporting a key does not permit the
+ * chain to send audio off the machine when local transcription fails.
  */
 export const createWhisperApiStrategy = (deps: WhisperApiDeps = {}): AsrStrategy => {
   const env = deps.env ?? process.env;
@@ -86,7 +89,7 @@ export const createWhisperApiStrategy = (deps: WhisperApiDeps = {}): AsrStrategy
       form.append("model", provider.model);
       form.append("response_format", "verbose_json");
       form.append("timestamp_granularities[]", "segment");
-      if (req.language !== undefined) form.append("language", req.language);
+      if (req.language !== undefined && req.language !== "auto") form.append("language", req.language);
 
       const res = await doFetch(`${provider.baseUrl}/audio/transcriptions`, {
         method: "POST",
@@ -107,7 +110,7 @@ export const createWhisperApiStrategy = (deps: WhisperApiDeps = {}): AsrStrategy
 
       const payload = (await res.json()) as VerboseJson;
       const parsed = parseVerboseJson(payload);
-      return {
+      const transcript: Transcript = {
         engine: "whisper-api",
         model: `${provider.id}/${provider.model}`,
         language: payload.language ?? req.language ?? null,
@@ -115,6 +118,8 @@ export const createWhisperApiStrategy = (deps: WhisperApiDeps = {}): AsrStrategy
         text: payload.text ?? parsed.segments.map((s) => s.text).join(" "),
         segments: parsed.segments,
       };
+      assertTranscriptQuality(transcript);
+      return transcript;
     },
   };
 };

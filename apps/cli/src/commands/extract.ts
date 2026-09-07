@@ -21,12 +21,13 @@ import {
   buildMediaStages,
   createFsArtifactStore,
   createRunStore,
+  createRunProcessJournal,
+  createTrackedExec,
   createSettingsStore,
   holdLease,
   openDatabase,
   persistExtraction,
   persistManifest,
-  realExec,
   resolvePaths,
   selectBackend,
 } from "@lirovo/node-runtime";
@@ -47,6 +48,8 @@ export interface ExtractOptions {
   readonly concurrency: number | null;
   /** Continue a run that was interrupted, reusing every stage that finished. */
   readonly resumeRunId: string | null;
+  readonly language?: string;
+  readonly allowRemoteAsr?: boolean;
 }
 
 const humanMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
@@ -153,13 +156,12 @@ export const extractCommand = async (
 ): Promise<ExitCode> => {
   const paths = resolvePaths();
   await mkdir(paths.runs, { recursive: true });
-  const store = createFsArtifactStore(paths.runs);
   const db = openDatabase(paths.dbFile);
-  const runs = createRunStore(db);
   // The lease owner has to identify a PROCESS, not a machine: the CLI and the
   // desktop app on one laptop are two writers, and "same host" would let them
   // take each other's runs.
-  const owner = `${hostname()}:${process.pid}`;
+  const owner = `${hostname()}:${process.pid}:${randomBytes(8).toString("hex")}`;
+  const runs = createRunStore(db, owner);
   // Renewed while the run is in flight, released in the `finally`. Without it
   // the sixty-second lease expires under every real extraction.
   //
@@ -175,6 +177,9 @@ export const extractCommand = async (
   process.once("SIGINT", onSigint);
 
   const runId: string = opts.resumeRunId ?? makeId("run", randomBytes(10));
+  const journal = createRunProcessJournal(db, runId, owner);
+  const store = createFsArtifactStore(paths.runs, journal.publish);
+  const exec = createTrackedExec({ onSpawn: journal.record });
   const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
 
   try {
@@ -189,11 +194,11 @@ export const extractCommand = async (
       }
       // A resumed run took the lease by claiming it rather than creating it,
       // and needs it held for exactly the same reason.
-      lease.release = holdLease(runs, opts.resumeRunId, owner);
+      lease.release = holdLease(runs, opts.resumeRunId, owner, () => controller.abort());
     }
 
-    const stages = await buildMediaStages({ exec: realExec, store, paths });
-    const asr = buildAsrChain({ exec: realExec, paths });
+    const stages = await buildMediaStages({ exec, store, paths });
+    const asr = buildAsrChain({ exec, paths, allowRemote: opts.allowRemoteAsr === true, language: opts.language ?? "auto" });
 
     const onEvent = (event: PipelineEvent): void => {
       const line = renderEvent(event);
@@ -220,7 +225,7 @@ export const extractCommand = async (
       // database, one preference, so `lirovo extract` cannot quietly disagree
       // with the model the user selected in the window.
       const preferred = opts.backendId ?? createSettingsStore(db).get("default_backend");
-      backend = await resolveInferenceBackend(buildBackends({ exec: realExec, paths, tuning }), preferred);
+      backend = await resolveInferenceBackend(buildBackends({ exec, paths, tuning }), preferred);
       dataSchema = JSON.parse(await readFile(opts.schemaPath as string, "utf8")) as Record<string, unknown>;
     }
 
@@ -243,7 +248,7 @@ export const extractCommand = async (
         if (opts.resumeRunId !== null) return;
         const sourceId = runs.upsertSource(manifest, opts.source);
         runs.createRun(runId, sourceId, null, owner);
-        lease.release = holdLease(runs, runId, owner);
+        lease.release = holdLease(runs, runId, owner, () => controller.abort());
       },
     };
     const input = { runId, source: opts.source, frameCap: opts.frameCap, signal: controller.signal };
@@ -261,7 +266,7 @@ export const extractCommand = async (
               ...(opts.model === null
                 ? {
                     withModel: (id: string, model: string) =>
-                      buildBackends({ exec: realExec, paths, tuning: { ...tuning, model } }).find(
+                      buildBackends({ exec, paths, tuning: { ...tuning, model } }).find(
                         (b) => b.id === id,
                       ) ?? null,
                   }
@@ -280,6 +285,7 @@ export const extractCommand = async (
     if (isExtraction(result)) {
       persisted = persistExtraction(db, {
         runId,
+        owner,
         data: result.data,
         evidenceByField: result.evidenceByField,
       });
@@ -295,9 +301,9 @@ export const extractCommand = async (
         inferenceModel: null,
         backendVersion: (await backend?.detect())?.version ?? null,
         dependencyVersions: {},
-        settings: { frameCap: opts.frameCap },
+        settings: { frameCap: opts.frameCap, language: opts.language ?? "auto", allowRemoteAsr: opts.allowRemoteAsr === true },
         createdAt: Math.floor(Date.now() / 1000),
-      });
+      }, owner);
     }
     runs.finish(runId, "succeeded");
 
@@ -374,8 +380,9 @@ export const extractCommand = async (
         ? EXIT.unavailable
         : EXIT.failed;
   } finally {
+    controller.abort();
     lease.release?.();
     process.removeListener("SIGINT", onSigint);
-    db.close();
+    try { journal.release(); } finally { db.close(); }
   }
 };

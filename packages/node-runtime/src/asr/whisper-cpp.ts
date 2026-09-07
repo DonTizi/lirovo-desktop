@@ -6,8 +6,9 @@ import type { AsrRequest, AsrStrategy, Exec, Transcript, TranscriptSegment } fro
 import { LirovoError } from "@lirovo/contracts";
 import type { LirovoPaths } from "@lirovo/core";
 import { resolveBinary } from "../binaries.js";
+import { assertTranscriptQuality } from "./quality.js";
 
-export const DEFAULT_WHISPER_MODEL = "ggml-base.en-q5_1.bin";
+export const DEFAULT_WHISPER_MODEL = "ggml-base-q5_1.bin";
 
 export interface WhisperCppDeps {
   readonly exec: Exec;
@@ -16,6 +17,7 @@ export interface WhisperCppDeps {
 }
 
 interface WhisperJson {
+  result?: { language?: string };
   transcription?: {
     offsets?: { from?: number; to?: number };
     text?: string;
@@ -23,7 +25,7 @@ interface WhisperJson {
 }
 
 /** whisper.cpp reports offsets in milliseconds. */
-export const parseWhisperJson = (raw: string): { segments: TranscriptSegment[]; text: string; durationS: number } => {
+export const parseWhisperJson = (raw: string): { segments: TranscriptSegment[]; text: string; durationS: number; language: string | null } => {
   const parsed = JSON.parse(raw) as WhisperJson;
   const segments: TranscriptSegment[] = [];
   let durationS = 0;
@@ -31,8 +33,8 @@ export const parseWhisperJson = (raw: string): { segments: TranscriptSegment[]; 
   for (const item of parsed.transcription ?? []) {
     const text = (item.text ?? "").trim();
     if (text === "") continue;
-    const tStart = (item.offsets?.from ?? 0) / 1000;
-    const tEnd = (item.offsets?.to ?? 0) / 1000;
+    const tStart = (item.offsets?.from ?? NaN) / 1000;
+    const tEnd = (item.offsets?.to ?? NaN) / 1000;
     durationS = Math.max(durationS, tEnd);
     segments.push({
       id: `seg_${segments.length}`,
@@ -46,7 +48,18 @@ export const parseWhisperJson = (raw: string): { segments: TranscriptSegment[]; 
       words: [],
     });
   }
-  return { segments, text: segments.map((s) => s.text).join(" "), durationS };
+  return { segments, text: segments.map((s) => s.text).join(" "), durationS, language: parsed.result?.language ?? null };
+};
+
+export const whisperLanguage = (model: string, requested?: string): string => {
+  const language = requested?.trim().toLowerCase() || "auto";
+  if (!/^(auto|[a-z]{2,3})$/.test(language)) {
+    throw new LirovoError("TRANSCRIBE_FAILED", "Choose Auto-detect or a supported language code, such as en or fr.", { stage: "asr" });
+  }
+  if (/\.en(?:[-.]|$)/i.test(path.basename(model)) && language !== "en") {
+    throw new LirovoError("TRANSCRIBE_FAILED", "The installed Whisper model is English-only. Choose English if the recording is English (--language en in the CLI), or install the multilingual Base model in Settings (lirovo install --model base) for auto-detection and other languages. This local attempt did not send audio remotely.", { stage: "asr" });
+  }
+  return language;
 };
 
 /**
@@ -66,7 +79,7 @@ export const resolveModelPath = (paths: LirovoPaths, env: NodeJS.ProcessEnv = pr
   try {
     const present = readdirSync(paths.models)
       .filter((f) => f.startsWith("ggml-") && f.endsWith(".bin"))
-      .sort();
+      .sort((a, b) => Number(/\.en(?:[-.]|$)/i.test(a)) - Number(/\.en(?:[-.]|$)/i.test(b)) || a.localeCompare(b));
     const first = present[0];
     if (first !== undefined) return path.join(paths.models, first);
   } catch {
@@ -105,6 +118,8 @@ export const createWhisperCppStrategy = (deps: WhisperCppDeps): AsrStrategy => {
       const bin = await resolveBinary("whisper-cli", deps.paths, env);
       if (bin === null) throw new LirovoError("DEPENDENCY_MISSING", "whisper-cli not found", { stage: "asr" });
       const model = resolveModelPath(deps.paths, env);
+      const language = whisperLanguage(model, req.language);
+      if (req.signal.aborted) throw new LirovoError("CANCELLED", "Transcription cancelled", { stage: "asr" });
 
       const ffmpeg = await resolveBinary("ffmpeg", deps.paths, env);
       if (ffmpeg === null) throw new LirovoError("DEPENDENCY_MISSING", "ffmpeg not found", { stage: "asr" });
@@ -128,24 +143,22 @@ export const createWhisperCppStrategy = (deps: WhisperCppDeps): AsrStrategy => {
             "-oj",           // JSON output
             "-of", prefix,
             "-np",           // no progress prints
-            ...(req.language !== undefined ? ["-l", req.language] : []),
+            "-l", language,
           ],
           { signal: req.signal as AbortSignal, timeoutMs: 60 * 60 * 1000 },
         );
 
         const parsed = parseWhisperJson(await readFile(`${prefix}.json`, "utf8"));
-        if (parsed.segments.length === 0) {
-          throw new LirovoError("TRANSCRIBE_FAILED", "whisper produced no speech segments", { stage: "asr" });
-        }
-
-        return {
+        const transcript: Transcript = {
           engine: "whisper-cpp",
           model: path.basename(model),
-          language: req.language ?? null,
+          language: parsed.language ?? (language === "auto" ? null : language),
           durationS: parsed.durationS,
           text: parsed.text,
           segments: parsed.segments,
         };
+        assertTranscriptQuality(transcript);
+        return transcript;
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

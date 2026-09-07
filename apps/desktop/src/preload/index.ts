@@ -17,6 +17,20 @@ export type Result<T> =
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
 
 const api = {
+  backupLibrary: ():Promise<Result<{cancelled:boolean;transfer?:import("../bridge/contract.js").LibraryTransferResult}>>=>ipcRenderer.invoke(CHANNELS.backupLibrary),
+  restoreLibrary: ():Promise<Result<{cancelled:boolean;transfer?:import("../bridge/contract.js").LibraryTransferResult}>>=>ipcRenderer.invoke(CHANNELS.restoreLibrary),
+  archiveRun: (runId:string,archived:boolean):Promise<Result<{saved:boolean}>>=>ipcRenderer.invoke(CHANNELS.archiveRun,{runId,archived}),
+  archivedRuns: ():Promise<Result<import("../bridge/contract.js").ArchivedRun[]>>=>ipcRenderer.invoke(CHANNELS.archivedRuns),
+  askKnowledge: (input:import("../bridge/contract.js").AskKnowledgeRequest):Promise<Result<import("../bridge/contract.js").KnowledgeAnswer>>=>ipcRenderer.invoke(CHANNELS.askKnowledge,input),
+  cancelKnowledge: (input:{requestId:string}):Promise<Result<{cancelled:boolean}>>=>ipcRenderer.invoke(CHANNELS.cancelKnowledge,input),
+  exportRun: (runId:string,options:import("../bridge/contract.js").ExportOptions):Promise<Result<import("../bridge/contract.js").ExportOutcome>>=>ipcRenderer.invoke(CHANNELS.exportRun,{runId,options}),
+  searchKnowledge: (input: import("../bridge/contract.js").KnowledgeQuery): Promise<Result<import("../bridge/contract.js").KnowledgeResult>> => ipcRenderer.invoke(CHANNELS.searchKnowledge, input),
+  compareKnowledge: (runIds: string[], approvedOnly = false): Promise<Result<import("../bridge/contract.js").KnowledgeComparison>> => ipcRenderer.invoke(CHANNELS.compareKnowledge, {runIds, approvedOnly}),
+  listQueue: (): Promise<Result<import("../bridge/contract.js").QueueItem[]>> => ipcRenderer.invoke(CHANNELS.listQueue),
+  resumeRun: (runId: string): Promise<Result<{runId: string}>> => ipcRenderer.invoke(CHANNELS.resumeRun, {runId}),
+  cancelQueuedRun: (runId: string): Promise<Result<{cancelled: boolean}>> => ipcRenderer.invoke(CHANNELS.cancelQueuedRun, {runId}),
+  reviewValue: (input: import("../bridge/contract.js").ReviewMutation): Promise<Result<import("../bridge/contract.js").ReviewSnapshot>> => ipcRenderer.invoke(CHANNELS.reviewValue, input),
+  reviewHistory: (runId: string, observationId: string): Promise<Result<import("../bridge/contract.js").ReviewHistoryEntry[]>> => ipcRenderer.invoke(CHANNELS.reviewHistory, {runId, observationId}),
   doctor: (): Promise<Result<unknown>> => ipcRenderer.invoke(CHANNELS.doctor),
   listRuns: (): Promise<Result<RunSummary[]>> => ipcRenderer.invoke(CHANNELS.listRuns),
   runDetail: (runId: string): Promise<Result<RunDetail | null>> => ipcRenderer.invoke(CHANNELS.runDetail, { runId }),
@@ -83,6 +97,8 @@ const api = {
   markOnboarded: (): Promise<Result<Preferences>> => ipcRenderer.invoke(CHANNELS.markOnboarded),
   /** By id. The command lives in the main process and never crosses this bridge. */
   runFix: (fixId: string): Promise<Result<FixResult>> => ipcRenderer.invoke(CHANNELS.runFix, { fixId }),
+  setTheme: (theme: "system" | "light" | "dark"): Promise<Result<Preferences>> =>
+    ipcRenderer.invoke(CHANNELS.setTheme, { theme }),
   setDefaultBackend: (backendId: string | null): Promise<Result<Preferences>> =>
     ipcRenderer.invoke(CHANNELS.setDefaultBackend, { backendId }),
 

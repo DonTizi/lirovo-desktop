@@ -10,12 +10,18 @@ import { parseVtt } from "./vtt.js";
 /**
  * The subtitle languages to ask for, most wanted first.
  *
- * Deliberately no globs. `en.*` looks harmless and matches `en-de`, which is an
- * auto-TRANSLATED track, not English — asking for a glob is how you end up
- * transcribing a machine translation of the talk instead of the talk.
+ * Explicit languages deliberately use no globs: `en.*` also matches translated
+ * `en-de`. Auto mode matches only the platform-designated original suffix.
  */
 export const subtitleLanguages = (lang: string): string =>
-  [...new Set([`${lang}-orig`, lang, "en-orig", "en"])].join(",");
+  lang === "auto" ? ".*-orig" : [...new Set([`${lang}-orig`, lang])].join(",");
+
+export const selectSubtitleFile = (files: readonly string[], language: string): string | undefined => {
+  const candidates = files.filter((file) => file.endsWith(".vtt")).sort();
+  if (language === "auto") return candidates.find((file) => /\.[a-z]{2,3}(?:-[A-Za-z]+)?-orig\.vtt$/.test(file));
+  return candidates.find((file) => file.endsWith(`.${language}-orig.vtt`))
+    ?? candidates.find((file) => file.endsWith(`.${language}.vtt`));
+};
 
 /**
  * yt-dlp is chatty: version nags and impersonation notices drown the one line
@@ -95,7 +101,7 @@ export const createCaptionsStrategy = (deps: CaptionsDeps): AsrStrategy => ({
     const ytDlp = await resolveBinary("yt-dlp", deps.paths, deps.env);
     if (ytDlp === null) throw new LirovoError("DEPENDENCY_MISSING", "yt-dlp not found", { stage: "asr" });
 
-    const lang = req.language ?? "en";
+    const lang = req.language ?? "auto";
     const dir = await mkdtemp(path.join(tmpdir(), "lirovo-subs-"));
     try {
       // A non-zero exit is NOT decisive here. yt-dlp reports one failed track
@@ -108,8 +114,9 @@ export const createCaptionsStrategy = (deps: CaptionsDeps): AsrStrategy => ({
           "--skip-download",
           "--write-subs",
           "--write-auto-subs",
-          // Ask for the requested language in every regional spelling, then
-          // fall back to English, then to whatever single track exists.
+          // Auto accepts only a platform-designated original track. If the
+          // platform cannot identify one, local ASR detects the audio language.
+          // An explicit language never silently falls back to English.
           "--sub-langs",
           subtitleLanguages(lang),
           "--convert-subs",
@@ -129,7 +136,7 @@ export const createCaptionsStrategy = (deps: CaptionsDeps): AsrStrategy => ({
         failure = explainYtDlpError(summarizeYtDlpFailure(error instanceof Error ? error.message : String(error)));
       });
 
-      const vttFile = (await readdir(dir)).find((f) => f.endsWith(".vtt"));
+      const vttFile = selectSubtitleFile(await readdir(dir), lang);
       if (vttFile === undefined) {
         throw new LirovoError(
           "TRANSCRIBE_FAILED",
@@ -148,7 +155,7 @@ export const createCaptionsStrategy = (deps: CaptionsDeps): AsrStrategy => ({
         // The published track, not something we produced: naming it keeps the
         // run manifest honest about where the words came from.
         model: vttFile,
-        language: /\.([a-z]{2}(-[A-Za-z]+)?)\.vtt$/.exec(vttFile)?.[1] ?? null,
+        language: /\.([a-z]{2,3}(?:-[A-Za-z]+)?)(?:-orig)?\.vtt$/.exec(vttFile)?.[1]?.replace(/-orig$/, "") ?? null,
         durationS: parsed.durationS,
         text: parsed.text,
         segments: parsed.segments,

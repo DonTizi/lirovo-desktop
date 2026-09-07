@@ -19,11 +19,12 @@ export interface Lens {
   readonly attach: (el: HTMLVideoElement | null) => void;
 }
 
-export const useLens = (): Lens => {
-  const [t, setT] = useState(0);
+export const useLens = (initialTime = 0): Lens => {
+  const [t, setT] = useState(initialTime);
   const [playing, setPlaying] = useState(false);
   const video = useRef<HTMLVideoElement | null>(null);
   const frame = useRef<number | null>(null);
+  const detach = useRef<(() => void) | null>(null);
 
   // `timeupdate` fires about four times a second, which is visibly steppy for a
   // playhead. Reading currentTime on every animation frame while playing is
@@ -42,8 +43,16 @@ export const useLens = (): Lens => {
   }, [playing]);
 
   const attach = useCallback((el: HTMLVideoElement | null) => {
+    detach.current?.();
+    detach.current = null;
     video.current = el;
     if (el === null) return;
+    const restore = ():void => {
+      const position = Math.max(0,Number.isFinite(el.duration)?Math.min(initialTime,el.duration):initialTime);
+      if(initialTime>0){el.currentTime=position;setT(position);}
+    };
+    el.addEventListener("loadedmetadata",restore,{once:true});
+    if(el.readyState>=1)restore();
     const onTime = (): void => setT(el.currentTime);
     const onPlay = (): void => setPlaying(true);
     const onPause = (): void => setPlaying(false);
@@ -52,7 +61,15 @@ export const useLens = (): Lens => {
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     el.addEventListener("ended", onPause);
-  }, []);
+    detach.current = () => {
+      el.removeEventListener("loadedmetadata",restore);
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("seeked", onTime);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onPause);
+    };
+  }, [initialTime]);
 
   const seek = useCallback((to: number) => {
     setT(to);

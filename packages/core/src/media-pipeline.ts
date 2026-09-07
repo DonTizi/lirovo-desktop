@@ -114,14 +114,19 @@ export const runMediaPipeline = async (
     previousHash: string,
     params: unknown,
     run: () => Promise<T>,
+    validate?: (value: T) => void,
   ): Promise<{ value: T; hash: string }> => {
     pointer = mergeStagePointer(pointer, name);
     const hash = chainHash(deps.sha256, previousHash, name, params);
 
     const cached = ledger.cached(name, hash);
     if (cached !== null) {
-      emit({ type: "stage:resumed", runId: input.runId, stage: name });
-      return { value: cached as T, hash };
+      let valid = true;
+      try { validate?.(cached as T); } catch { valid = false; }
+      if (valid) {
+        emit({ type: "stage:resumed", runId: input.runId, stage: name });
+        return { value: cached as T, hash };
+      }
     }
 
     const attempt = ledger.begin(name, hash);
@@ -129,6 +134,7 @@ export const runMediaPipeline = async (
     const startedAt = deps.now();
     try {
       const value = await run();
+      validate?.(value);
       ledger.complete(name, attempt, { status: "done", output: value });
       emit({ type: "stage:done", runId: input.runId, stage: name, ms: deps.now() - startedAt });
       return { value, hash };
@@ -199,7 +205,7 @@ export const runMediaPipeline = async (
     const signal = race.signal;
 
     const asrRun = 
-      stage("asr", normalized.hash, null, () =>
+      stage("asr", normalized.hash, { identity: deps.asr.cacheIdentity ?? deps.asr.name }, () =>
         deps.asr.transcribe({
           runId: input.runId,
           sourceKind: ingested.value.manifest.source_type === "file" ? "file" : "url",
@@ -207,6 +213,7 @@ export const runMediaPipeline = async (
           audioPath: normalized.value.audio_path,
           signal,
         }),
+        deps.asr.validateTranscript,
       ).catch((error: unknown) => {
         stopSibling();
         throw error;
@@ -260,7 +267,15 @@ export const runMediaPipeline = async (
 
     const [asrSettled, visualSettled] = await Promise.allSettled([asrRun, visualRun]);
     race.dispose();
-    if (visualSettled.status === "rejected") throw visualSettled.reason;
+    if (visualSettled.status === "rejected") {
+      // ASR stops its sibling on failure. That internal cancellation must not
+      // replace the useful ASR error with a claim that the user cancelled.
+      if (asrSettled.status === "rejected" && !input.signal.aborted
+        && visualSettled.reason instanceof LirovoError && visualSettled.reason.code === "CANCELLED") {
+        throw asrSettled.reason;
+      }
+      throw visualSettled.reason;
+    }
     if (asrSettled.status === "rejected") throw asrSettled.reason;
     const transcribed = asrSettled.value;
     const visual = visualSettled.value;
@@ -275,7 +290,10 @@ export const runMediaPipeline = async (
     emit({ type: "run:done", runId: input.runId, ms: deps.now() });
     return {
       manifest: ingested.value.manifest,
-      chainTip: transcribed.hash,
+      // A retried recognizer can produce different words for identical inputs.
+      // Downstream graph/results must follow the actual transcript, not merely
+      // the parameters that were intended to produce it.
+      chainTip: deps.sha256(`${transcribed.hash} ${JSON.stringify(transcript)}`),
       transcript,
       rawFrameCount: visual.raw,
       keptFrameCount: visual.kept,

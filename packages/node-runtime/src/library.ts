@@ -1,7 +1,9 @@
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { LirovoPaths } from "@lirovo/core";
 import type { Db } from "./store/db.js";
+import { LirovoError } from "@lirovo/contracts";
+import { assertNoExtractionProcesses, ownerProcessIsGone } from "./store/processes.js";
 
 export interface StorageReport {
   readonly dataDir: string;
@@ -69,17 +71,7 @@ export const storageReport = async (paths: LirovoPaths, db: Db): Promise<Storage
  * one.
  */
 export const purgeRuns = async (paths: LirovoPaths, db: Db): Promise<{ freedBytes: number }> => {
-  const freedBytes = await directorySize(paths.runs);
-  await rm(paths.runs, { recursive: true, force: true });
-  await mkdir(paths.runs, { recursive: true });
-  const clear = db.transaction(() => {
-    db.exec("DELETE FROM runs");
-    // Sources are only meaningful through a run; the FK is on runs, not the
-    // other way round, so they have to be swept after.
-    db.exec("DELETE FROM sources WHERE id NOT IN (SELECT source_id FROM runs)");
-  });
-  clear.immediate();
-  return { freedBytes };
+  return purgeOwned(paths, db, false);
 };
 
 /**
@@ -96,23 +88,65 @@ export const purgeRuns = async (paths: LirovoPaths, db: Db): Promise<{ freedByte
  */
 const OWNED = ["runs", "models", "bin"] as const;
 
-export const purgeEverything = async (paths: LirovoPaths): Promise<{ freedBytes: number }> => {
-  const freedBytes = await directorySize(paths.data);
+export const purgeEverything = async (paths: LirovoPaths, db: Db): Promise<{ freedBytes: number }> => purgeOwned(paths, db, true);
 
-  for (const child of OWNED) {
-    await rm(path.join(paths.data, child), { recursive: true, force: true });
+async function inspectOwnedTree(at: string): Promise<number> {
+  const info = await lstat(at).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+  if (info === null) return 0;
+  if (info.isSymbolicLink()) throw new Error(`Refusing to purge a symbolic link: ${at}`);
+  if (!info.isDirectory()) return info.size;
+  let total = 0;
+  for (const entry of await readdir(at)) total += await inspectOwnedTree(path.join(at, entry));
+  return total;
+}
+
+/** The caller gives this async operation exclusive use of its DB connection. */
+async function purgeOwned(paths: LirovoPaths, db: Db, everything: boolean): Promise<{ freedBytes: number }> {
+  const root = path.resolve(paths.data);
+  if (root === path.parse(root).root || path.resolve(paths.runs) !== path.join(root, "runs") || path.resolve(paths.models) !== path.join(root, "models") || path.resolve(paths.dbFile) !== path.join(root, "lirovo.db")) {
+    throw new Error("Refusing to purge an unexpected library layout.");
   }
-  // The database and the two files SQLite keeps beside it in WAL mode.
-  for (const suffix of ["", "-wal", "-shm"]) {
-    await rm(`${paths.dbFile}${suffix}`, { force: true });
+  const targets = (everything ? OWNED : ["runs"]).map((child) => path.join(root, child));
+  // Never unlink the database, WAL or SHM: another process may already have
+  // this inode open. Its startup/journal write must contend on this same lock.
+  db.exec("BEGIN IMMEDIATE");
+  let changed = false;
+  let removedBytes = 0;
+  try {
+    assertNoExtractionProcesses(db);
+    const leases = db.prepare<[], { lease_owner: string | null; lease_expires_at: number | null }>("SELECT lease_owner, lease_expires_at FROM runs WHERE lease_owner IS NOT NULL").all();
+    if (leases.some((run) => (run.lease_expires_at ?? 0) >= Date.now() / 1000 || !ownerProcessIsGone(run.lease_owner!)) ||
+      db.prepare("SELECT run_id FROM extraction_queue WHERE status IN ('queued','running') LIMIT 1").get()) {
+      throw new LirovoError("STORE_BUSY", "Stop active extractions and queued work before deleting library data.");
+    }
+    for (let ancestor = root; ; ancestor = path.dirname(ancestor)) {
+      const info = await lstat(ancestor);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Refusing to purge a linked library directory.");
+      if (ancestor === path.dirname(ancestor)) break;
+    }
+    const sizes: number[] = [];
+    for (const target of targets) sizes.push(await inspectOwnedTree(target));
+    db.exec("DELETE FROM extraction_queue; DELETE FROM extraction_processes; DELETE FROM runs; DELETE FROM sources;");
+    if (everything) db.exec("DELETE FROM schema_revisions; DELETE FROM schemas; DELETE FROM settings;");
+    changed = true;
+    for (const [index, target] of targets.entries()) {
+      await rm(target, { recursive: true, force: true });
+      removedBytes += sizes[index] ?? 0;
+      await mkdir(target, { recursive: true });
+    }
+    db.exec("COMMIT");
+    return { freedBytes: removedBytes };
+  } catch (error) {
+    // Deletion cannot be rolled back. Once it starts, retain the logical clear
+    // rather than resurrecting rows whose files may already have been removed.
+    if (changed) {
+      try { db.exec("COMMIT"); } catch { try { db.exec("ROLLBACK"); } catch { /* Preserve the original failure. */ } }
+      throw new Error(`Library reset was only partially completed; some files may remain. ${String(error)}`);
+    }
+    try { db.exec("ROLLBACK"); } catch { /* Preserve the original failure. */ }
+    throw error;
   }
-  // Recreated empty, the way purgeRuns leaves its directory: the next write
-  // needs somewhere to go, and a missing parent fails in a way that reads as a
-  // bug rather than as a clean slate.
-  await mkdir(paths.runs, { recursive: true });
-  await mkdir(paths.models, { recursive: true });
-  return { freedBytes };
-};
+}
 
 /**
  * Is this path inside the directory this app owns?

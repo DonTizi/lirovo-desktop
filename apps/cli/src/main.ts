@@ -20,6 +20,9 @@ extract flags
   --schema <file.json>          JSON Schema the extraction must conform to
   --backend <id>                force an inference backend (default: first available)
   --model <name>                model the backend should use
+  --language <auto|code>        speech language (default auto; en, fr, etc.)
+  --allow-remote-asr            allow hosted transcription to receive audio
+                                if captions and local transcription fail
   --effort <low|medium|high>    reasoning effort (default low — frame description
                                 is perception, not reasoning)
   --time-budget <minutes>       wall-clock ceiling for describing frames
@@ -93,6 +96,12 @@ export const main = async (argv: readonly string[]): Promise<void> => {
         const budgetFlag = args.flags["time-budget"];
         const concFlag = args.flags["concurrency"];
         const resumeFlag = args.flags["resume"];
+        const languageFlag = args.flags["language"];
+        if (languageFlag !== undefined && (typeof languageFlag !== "string" || !/^(auto|[a-z]{2,3})$/.test(languageFlag))) {
+          errOut("--language must be auto or a supported language code, such as en or fr");
+          code = EXIT.usage;
+          break;
+        }
         const visionBudgetS = typeof budgetFlag === "string" ? Number(budgetFlag) * 60 : 15 * 60;
         if (!Number.isFinite(visionBudgetS) || visionBudgetS <= 0) {
           errOut(`--time-budget must be a positive number of minutes, got "${String(budgetFlag)}"`);
@@ -124,6 +133,8 @@ export const main = async (argv: readonly string[]): Promise<void> => {
             visionBudgetS,
             concurrency: typeof concFlag === "string" ? Number(concFlag) : null,
             resumeRunId: typeof resumeFlag === "string" ? resumeFlag : null,
+            language: typeof languageFlag === "string" ? languageFlag : "auto",
+            allowRemoteAsr: boolFlag(args, "allow-remote-asr"),
           },
           out,
           errOut,
