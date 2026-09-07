@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/DonTizi/lirovo-desktop/compare/v0.5.0...v0.5.1) (2026-09-07)
+
+
+### Fixed
+
+* **desktop:** refine Knowledge search and dark workspace for 0.5.1 ([5cf49c1](https://github.com/DonTizi/lirovo-desktop/commit/5cf49c176d238e2ccd918ba790f0fa06465c3cf4))
+
 ## [0.5.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.2...v0.5.0) (2026-09-07)
 
 
