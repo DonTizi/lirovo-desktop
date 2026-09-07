@@ -15,6 +15,7 @@ export const extractRequestSchema = z.object({
   backendId: z.string().nullable(),
   /** Which stored revision this run was asked with, when it came from one. */
   schemaRevisionId: z.string().nullable().optional(),
+  schemaName: z.string().nullable().optional(),
 });
 /**
  * The validator and the contract must describe the same request.
@@ -114,4 +115,3 @@ export type {
   UpdateState,
   ValueRow,
 } from "../bridge/contract.js";
-

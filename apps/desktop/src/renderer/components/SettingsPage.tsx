@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -748,8 +748,8 @@ export function SettingsPage({
               </thead>
               <tbody>
                 {GROUPS.filter((g) => shown.some((e) => e.group === g)).map((g) => (
-                  <>
-                    <tr key={g}>
+                  <Fragment key={g}>
+                    <tr>
                       <td colSpan={4} className="bg-recessed border-hairline text-ink-label border-b px-4 py-1.5 text-xs">
                         {g}
                       </td>
@@ -822,7 +822,7 @@ export function SettingsPage({
                           </td>
                         </tr>
                       ))}
-                  </>
+                  </Fragment>
                 ))}
                 {shown.length === 0 && (
                   <tr>

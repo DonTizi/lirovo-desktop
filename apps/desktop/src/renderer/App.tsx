@@ -1,32 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { CircleCheck, CircleDashed, CircleSlash, CircleX, FileVideo, History, Loader2, ShieldAlert } from "lucide-react";
-import { STAGES, mergeStagePointer, type PipelineEvent, type Stage } from "@lirovo/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MotionConfig } from "framer-motion";
+import { ShieldCheck } from "lucide-react";
+import { LirovoMark } from "./components/LirovoMark";
+import { type PipelineEvent, type Stage } from "@lirovo/contracts";
 import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
-import type { RunDetail, RunSummary, ValueRow } from "../bridge/contract.js";
-import { NavBar, type NavTab, type TabId } from "./components/NavBar";
+import { submittedSchemaKey as categoryKeyFor } from "../bridge/schema-identity";
+import type { RunDetail, RunSummary } from "../bridge/contract.js";
+import { NavBar, type TabId } from "./components/NavBar";
 import { Onboarding } from "./components/Onboarding";
 import { applyChoice, type ThemeChoice } from "./lib/theme";
 import { TitleBar } from "./components/TitleBar";
-import { ListColumn, type ListEntry } from "./components/primitives";
 import { SourceInput } from "./components/SourceInput";
 import { RunProgress, type LiveStage } from "./components/RunProgress";
+import { eventStage } from "./components/progress-model";
+import { isWorking } from "./components/progress-model";
+import { pollSerial } from "./lib/poll";
+import { pendingRun } from "./lib/run-session";
 import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
-import { Hero } from "./components/hero";
 import { Library } from "./components/library";
 import { SchemasPage } from "./components/SchemasPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { UpdateToast } from "./components/UpdateToast";
-import { SystemPanel, type SystemReport } from "./components/SystemPanel";
-import { cn } from "./lib/cn";
-
-const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-
-interface StageState {
-  readonly state: "waiting" | "active" | "done" | "failed" | "skipped";
-  readonly meta: string;
-}
+import { type SystemReport } from "./components/SystemPanel";
 
 /**
  * Stage state built only from events the engine actually sent.
@@ -40,7 +36,9 @@ const useStages = (): {
   reset: (runId: string) => void;
   apply: (event: PipelineEvent) => void;
 } => {
-  const [byRun, setByRun] = useState<Map<string, Map<Stage, LiveStage>>>(new Map());
+  const [byRun, setByRun] = useState<Map<string, Map<Stage, LiveStage>>>(
+    new Map(),
+  );
 
   const reset = useCallback((runId: string) => {
     setByRun((current) => {
@@ -56,37 +54,8 @@ const useStages = (): {
       // Keyed by run, because two tabs can be open on two runs and a single
       // map would paint one run's vision progress onto the other's row.
       const mine = new Map(next.get(event.runId) ?? []);
-      const set = (stage: Stage, state: LiveStage): void => {
-        mine.set(stage, state);
-      };
-      switch (event.type) {
-        case "stage:start":
-          set(event.stage, { state: "active", meta: event.attempt > 1 ? `attempt ${event.attempt}` : "" });
-          break;
-        case "stage:resumed":
-          set(event.stage, { state: "done", meta: "resumed" });
-          break;
-        case "stage:skipped":
-          set(event.stage, { state: "skipped", meta: event.why });
-          break;
-        case "stage:progress":
-          set(event.stage, {
-            state: "active",
-            meta: `${event.done}/${event.total}${event.note === undefined ? "" : ` ${event.note}`}`,
-          });
-          break;
-        case "stage:done":
-          set(event.stage, { state: "done", meta: `${(event.ms / 1000).toFixed(1)}s` });
-          break;
-        case "stage:degraded":
-          set(event.stage, { state: "failed", meta: event.message });
-          break;
-        case "run:failed":
-          if (event.stage !== null) set(event.stage, { state: "failed", meta: event.code });
-          break;
-        default:
-          break;
-      }
+      const update = eventStage(event);
+      if (update !== null) mine.set(update.stage, update.value);
       next.set(event.runId, mine);
       return next;
     });
@@ -99,14 +68,26 @@ export const App = (): JSX.Element => {
   const [tab, setTab] = useState<TabId>("overview");
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
-  const [fields, setFields] = useState<FieldSpec[]>([...(SCHEMA_PRESETS[0]?.fields ?? [])]);
-  const [schemaLabel, setSchemaLabel] = useState(SCHEMA_PRESETS[0]?.label ?? "Transcript only");
+  const [fields, setFields] = useState<FieldSpec[]>([
+    ...(SCHEMA_PRESETS[0]?.fields ?? []),
+  ]);
+  const [schemaLabel, setSchemaLabel] = useState(
+    SCHEMA_PRESETS[0]?.label ?? "Transcript only",
+  );
   const [schemaVersion, setSchemaVersion] = useState<number | null>(null);
   // Set only while the fields are exactly a stored revision, so a run can point
   // at the contract it was actually asked with.
   const [revisionId, setRevisionId] = useState<string | null>(null);
+  const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [over, setOver] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
+  const previousCollapsed = useRef(sidebarCollapsed);
+  useEffect(() => {
+    if (previousCollapsed.current !== sidebarCollapsed)
+      sidebarToggle.current?.focus();
+    previousCollapsed.current = sidebarCollapsed;
+  }, [sidebarCollapsed]);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runsError, setRunsError] = useState<string | null>(null);
@@ -125,6 +106,41 @@ export const App = (): JSX.Element => {
   const { byRun, reset, apply } = useStages();
   // The run this window is executing, so its tab can show it live.
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const sessionIds = useRef(new Set<string>());
+  const pendingReads = useRef(new Set<string>());
+  const executingRun = useRef<string | null>(null);
+  const submittedSource = useRef("");
+  const submittedAt = useRef(0);
+  const submittedSchemaName = useRef<string | null>(null);
+  const submittedCategory = useRef<string>("unknown");
+
+  const refreshRun = useCallback(async (runId: string) => {
+    if (pendingReads.current.has(runId)) return;
+    pendingReads.current.add(runId);
+    try {
+      const got = await window.lirovo.runDetail(runId);
+      if (!sessionIds.current.has(runId)) return;
+      if (got.ok && got.value !== null) {
+        const loaded = got.value;
+        setOpen((current) => new Map(current).set(runId, loaded));
+      } else if (!got.ok)
+        setRunsError(`${got.error.code}: ${got.error.message}`);
+    } catch (cause) {
+      setRunsError(`Could not refresh extraction: ${String(cause)}`);
+    } finally {
+      pendingReads.current.delete(runId);
+    }
+  }, []);
+
+  const openRun = useCallback(
+    (runId: string) => {
+      sessionIds.current.add(runId);
+      setQuery("");
+      setTab(runId);
+      void refreshRun(runId);
+    },
+    [refreshRun],
+  );
 
   // The main process decides whether it may quit and install, and it cannot
   // see the engine's state. It is told here, whenever the answer changes —
@@ -158,12 +174,25 @@ export const App = (): JSX.Element => {
         if (event.type === "run:start") {
           reset(event.runId);
           setActiveRunId(event.runId);
+          executingRun.current = event.runId;
+          setOpen((current) =>
+            new Map(current).set(
+              event.runId,
+              pendingRun(event.runId, submittedSource.current),
+            ),
+          );
+          openRun(event.runId);
+          void loadRuns();
         }
-        if (event.type === "run:done" || event.type === "run:failed" || event.type === "run:cancelled") {
+        if (
+          event.type === "run:done" ||
+          event.type === "run:failed" ||
+          event.type === "run:cancelled"
+        ) {
           void loadRuns();
         }
       }),
-    [apply, reset, loadRuns],
+    [apply, reset, loadRuns, openRun],
   );
 
   // Asking the engine what this machine can do is also the first proof that the
@@ -207,77 +236,97 @@ export const App = (): JSX.Element => {
   /** Painted immediately, then confirmed: a click that waits on a round trip
    *  before the check moves reads as broken. */
   const chooseBackend = (backendId: string): void => {
-    setSystem((current) => (current === null ? current : { ...current, defaultBackendId: backendId }));
+    setSystem((current) =>
+      current === null ? current : { ...current, defaultBackendId: backendId },
+    );
     void window.lirovo.setDefaultBackend(backendId).then((answer) => {
       if (!answer.ok) return;
       setSystem((current) =>
-        current === null ? current : { ...current, defaultBackendId: answer.value.defaultBackendId },
+        current === null
+          ? current
+          : { ...current, defaultBackendId: answer.value.defaultBackendId },
       );
     });
   };
 
   const start = async (): Promise<void> => {
-    if (source.trim() === "") return;
+    if (running || source.trim() === "") return;
     setError(null);
     setActiveRunId(null);
     setRunning(true);
+    submittedSource.current = source.trim();
+    submittedAt.current = Date.now() / 1000;
+    submittedSchemaName.current =
+      fields.length === 0 ? "Transcript only" : schemaLabel;
+    executingRun.current = null;
     setTab("overview");
 
-    const answer = await window.lirovo.extract({
-      source: source.trim(),
-      // No fields means transcribe and detect scenes, and fill nothing in.
-      schemaJson: fields.length === 0 ? null : JSON.stringify(compileSchema(fields)),
-      backendId: null,
-      schemaRevisionId: revisionId,
-    });
+    const schemaJson =
+      fields.length === 0 ? null : JSON.stringify(compileSchema(fields));
+    const answer = await categoryKeyFor(schemaJson, selectedSchemaId)
+      .then((key) => {
+        submittedCategory.current = key;
+        return window.lirovo.extract({
+          source: source.trim(),
+          // No fields means transcribe and detect scenes, and fill nothing in.
+          schemaJson,
+          backendId: null,
+          schemaRevisionId: revisionId,
+          schemaName: submittedSchemaName.current,
+        });
+      })
+      .catch((cause) => ({
+        ok: false as const,
+        error: { code: "EXTRACTION_INTERRUPTED", message: String(cause) },
+      }));
     setRunning(false);
     void loadRuns();
 
     if (!answer.ok) {
       setError(`${answer.error.code}: ${answer.error.message}`);
+      const id = executingRun.current;
+      if (id !== null && sessionIds.current.has(id)) {
+        setOpen((current) => {
+          const previous = current.get(id);
+          return previous
+            ? new Map(current).set(id, {
+                ...previous,
+                status:
+                  answer.error.code === "CANCELLED" ? "cancelled" : "failed",
+                errorCode: answer.error.code,
+                errorMessage: answer.error.message,
+              })
+            : current;
+        });
+        void refreshRun(id);
+      }
       return;
     }
-    await openRun((answer.value as { runId: string }).runId);
+    // Completion refreshes the session without taking the user away from another page.
+    await refreshRun((answer.value as { runId: string }).runId);
   };
 
   // Anything unfinished keeps refreshing. Without this a run only updates when
   // the user clicks something, which is exactly when it looks stuck.
-  const watching = running || runs.some((r) => r.status === "running" || r.status === "claimed");
+  const watching =
+    running ||
+    runs.some((r) => isWorking(r.status)) ||
+    [...openTabs.values()].some((r) => isWorking(r.status));
   useEffect(() => {
     if (!watching) return;
-    const timer = window.setInterval(() => {
-      void loadRuns();
-      const open = [...openTabs.keys()];
-      for (const runId of open) {
-        void window.lirovo.runDetail(runId).then((got) => {
-          if (got.ok && got.value !== null) setOpen((m) => new Map(m).set(runId, got.value as RunDetail));
-        });
-      }
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [watching, loadRuns, openTabs]);
-
-  const openRun = async (runId: string): Promise<void> => {
-    const got = await window.lirovo.runDetail(runId);
-    if (got.ok && got.value !== null) {
-      setOpen((m) => new Map(m).set(runId, got.value as RunDetail));
-      setTab(runId);
-    }
-  };
-
-  const onDrop = (event: React.DragEvent): void => {
-    event.preventDefault();
-    setOver(false);
-    const file = event.dataTransfer.files[0];
-    // A dropped File carries no path; only the preload can recover the real one.
-    if (file !== undefined) setSource(window.lirovo.pathForFile(file));
-  };
+    return pollSerial(async () => {
+      await loadRuns().catch((cause) => setRunsError(String(cause)));
+      await Promise.all([...sessionIds.current].map(refreshRun));
+    });
+  }, [watching, loadRuns, refreshRun]);
 
   const detail = openTabs.get(tab) ?? null;
   const values = useMemo(() => {
     if (detail === null) return [];
     const needle = query.trim().toLowerCase();
-    const rows = [...detail.values].sort((a, b) => b.reviewPriority - a.reviewPriority);
+    const rows = [...detail.values].sort(
+      (a, b) => b.reviewPriority - a.reviewPriority,
+    );
     if (needle === "") return rows;
     return rows.filter(
       (r) =>
@@ -288,260 +337,246 @@ export const App = (): JSX.Element => {
   }, [detail, query]);
   const grounded = values.filter((v) => v.evidence.length > 0).length;
 
-  const runEntries: ListEntry[] = runs.map((r) => ({
-    id: r.runId,
-    label: r.title ?? r.runId,
-    hint: `${r.valueCount} value${r.valueCount === 1 ? "" : "s"}`,
-    meta: r.status,
-    icon: FileVideo,
-  }));
-
-  // A run that produced nothing is the one a human most needs to look at, so it
-  // ranks above one that merely finished.
-  const reviewEntries: ListEntry[] = runs
-    .filter((r) => r.status !== "succeeded" || r.valueCount === 0)
-    .map((r) => ({
-      id: r.runId,
-      label: r.title ?? r.runId,
-      hint:
-        r.status === "succeeded"
-          ? "nothing was extracted"
-          : r.status === "stopped"
-            ? "nothing is working on this"
-            : `run ${r.status}`,
-      meta: String(r.valueCount),
-      icon: ShieldAlert,
-    }));
-
-  const activityEntries: ListEntry[] = runs.map((r) => ({
-    id: r.runId,
-    label: `${r.title ?? r.runId} · ${r.status}`,
-    hint: `${r.valueCount} value${r.valueCount === 1 ? "" : "s"} recorded`,
-    meta: new Date(r.createdAt * 1000).toLocaleDateString(),
-    icon: History,
-  }));
-
-  // System earns a tab of its own. It was only at the foot of Overview, under
-  // the hero, the field and the schema picker — so on the one machine it
-  // exists for, the machine where nothing works yet, the page that says what
-  // is missing was the last thing on the page.
   const attention =
-    system === null ? 0 : (system.ok ? 0 : system.problems.length) + system.warnings.length;
-  const sections: NavTab[] = [
-    { id: "overview", label: "Overview" },
-    { id: "library", label: "Library", count: runs.length },
-    { id: "schemas", label: "Schemas" },
-    { id: "settings", label: "Settings", ...(attention > 0 ? { count: attention } : {}) },
-  ];
-  // One flag, read by every page guard below. `onboarded` is null until the
-  // engine answers, and treating null as "not onboarded" would flash the
-  // first-run screen at a returning user for a frame.
+    system === null
+      ? 0
+      : (system.ok ? 0 : system.problems.length) + system.warnings.length;
   const firstRun = onboarded === false && system !== null;
-
-  const runTabs: NavTab[] = [...openTabs.values()].map((r) => ({
-    id: r.runId,
-    label: r.title ?? r.runId,
-    closable: true,
-  }));
+  const title = firstRun
+    ? "Welcome to Lirovo"
+    : detail !== null
+      ? (detail.title ?? detail.runId)
+      : tab === "overview"
+        ? "New extraction"
+        : tab === "library"
+          ? "Library"
+          : tab === "schemas"
+            ? "Schemas"
+            : "Settings";
 
   return (
-    <div className="bg-canvas text-ink flex h-full flex-col">
-      <TitleBar
-        query={query}
-        onQuery={setQuery}
-        grounded={grounded}
-        total={values.length}
-        running={running}
-        onCancel={() => void window.lirovo.cancel()}
-        onRefresh={() => void loadRuns()}
-      />
-      <NavBar
-        sections={sections}
-        runs={runTabs}
-        active={tab}
-        onSelect={setTab}
-        onCloseRun={(id) =>
-          setOpen((m) => {
-            const next = new Map(m);
-            next.delete(id);
-            setTab("library");
-            return next;
-          })
-        }
-        onOpenSettings={() => setTab("settings")}
-        dataDir={dataDir}
-      />
-
-      {/* `overflow-x-clip`, not `auto`: the hero's pixel field is a viewport-wide
-          element hung outside the title so the texture bleeds to the edges of
-          the content column. Without the clip that width becomes scrollable
-          and the whole window slides sideways into empty space. */}
-      <UpdateToast />
-
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
-        <div className="mx-auto max-w-6xl px-6 py-10">
-          {/* The first launch, inside the same shell rather than over it: the
-              rows here are the rows Settings draws, and meeting them first in a
-              modal and again later in a table would read as two different
-              apps describing one machine. */}
-          {firstRun && system !== null && (
-            <Onboarding
-              report={system}
-              checking={checking}
-              onRecheck={() => void check()}
-              onChooseBackend={chooseBackend}
-              onDone={() => {
-                setOnboarded(true);
-                void window.lirovo.markOnboarded();
-              }}
-            />
-          )}
-
-          {!firstRun && tab === "overview" && (
-            <>
-              {/* The blocking reason belongs ABOVE the field, not only in the
-                  panel below: a user who drops a two-hour video and learns
-                  afterwards that ffmpeg is missing has already spent the wait. */}
-              {(bridgeError ?? (system !== null && !system.ok ? (system.problems[0] ?? null) : null)) !== null && (
-                <p className="border-hairline text-danger-text mb-6 border-b pb-3 text-sm">
-                  {bridgeError ?? system?.problems[0]}
-                </p>
-              )}
-
-              <Hero title="Lirovo" sub="Drop a link or a file. Every value comes back with the moment that proves it." />
-
-              <div className="relative mx-auto mt-7 max-w-3xl">
-                <SourceInput
-                  value={source}
-                  onChange={setSource}
-                  onSubmit={() => void start()}
-                  busy={running}
-                  onBrowse={() => {
-                    void window.lirovo.pickFile().then((picked) => {
-                      if (picked.ok && picked.value !== null) setSource(picked.value);
-                    });
-                  }}
-                />
-
-                {/* The progress opens where the field is, not somewhere else on
-                    the page. Keeping the work in the place the user just acted
-                    is what makes it read as the same thing continuing rather
-                    than a second thing appearing. */}
-                <AnimatePresence>
-                  {(running || activeRunId !== null) && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <div className="mt-2">
-                        <RunProgress
-                          status={running ? "running" : "finished"}
-                          live={byRun.get(activeRunId ?? "") ?? new Map()}
-                          attempts={[]}
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {error !== null && (
-                  <p className="border-hairline text-danger-text mt-3 border-t px-1 py-3 font-mono text-xs">{error}</p>
-                )}
-
-                <SchemaPicker
-                  label={schemaLabel}
-                  version={schemaVersion}
-                  fields={fields}
-                  onChoose={(choice) => {
-                    setFields([...choice.fields]);
-                    setSchemaLabel(choice.label);
-                    setRevisionId(choice.revisionId);
-                    setSchemaVersion(null);
-                    if (choice.revisionId !== null) {
-                      // The badge on the trigger has to be the version actually
-                      // in force, not a number guessed from the label.
-                      void window.lirovo.listSchemas().then((answer) => {
-                        if (!answer.ok) return;
-                        setSchemaVersion(answer.value.find((x) => x.name === choice.label)?.version ?? null);
-                      });
-                    }
-                  }}
-                  onEdit={(next) => {
-                    setFields(next);
-                    // Edited in place, so it is no longer the stored revision.
-                    setRevisionId(null);
-                    setSchemaVersion(null);
-                    setSchemaLabel((current) => (current.endsWith(" (edited)") ? current : `${current} (edited)`));
-                  }}
-                  onManage={() => setTab("schemas")}
-                />
-              </div>
-
-              <div className="mt-8">
-                <SystemPanel
+    <MotionConfig reducedMotion="user">
+      <div className="text-ink flex h-full overflow-hidden">
+        {!sidebarCollapsed && (
+          <NavBar
+            runs={
+              activeRunId !== null &&
+              !runs.some((r) => r.runId === activeRunId) &&
+              openTabs.has(activeRunId)
+                ? [
+                    {
+                      runId: activeRunId,
+                      title: openTabs.get(activeRunId)!.title,
+                      status: openTabs.get(activeRunId)!.status,
+                      createdAt: submittedAt.current,
+                      valueCount: 0,
+                      groundedCount: 0,
+                      durationS: null,
+                      sourceType: null,
+                      schemaName: submittedSchemaName.current,
+                      schemaKey: submittedCategory.current,
+                      frameCount: null,
+                    },
+                    ...runs,
+                  ]
+                : runs
+            }
+            openRunIds={new Set(openTabs.keys())}
+            active={tab}
+            onSelect={setTab}
+            onOpenRun={(id) => void openRun(id)}
+            onCloseRun={(id) => {
+              sessionIds.current.delete(id);
+              setOpen((current) => {
+                const next = new Map(current);
+                next.delete(id);
+                return next;
+              });
+              if (tab === id) setTab("library");
+            }}
+            onCollapse={() => setSidebarCollapsed(true)}
+            toggleRef={sidebarToggle}
+            attention={attention}
+            ready={system?.ok === true && bridgeError === null}
+            dataDir={dataDir}
+            error={runsError}
+          />
+        )}
+        <div className="workspace-main flex min-w-0 flex-1 flex-col">
+          <TitleBar
+            title={title}
+            query={query}
+            onQuery={setQuery}
+            grounded={grounded}
+            total={values.length}
+            showSearch={detail !== null}
+            running={running}
+            onCancel={() => void window.lirovo.cancel()}
+            onRefresh={() => void loadRuns()}
+            sidebarCollapsed={sidebarCollapsed}
+            onShowSidebar={() => setSidebarCollapsed(false)}
+            toggleRef={sidebarToggle}
+          />
+          <UpdateToast />
+          <main className="min-h-0 flex-1 overflow-auto">
+            {firstRun && system !== null && (
+              <div className="mx-auto max-w-5xl px-8 py-10">
+                <Onboarding
                   report={system}
+                  checking={checking}
                   onRecheck={() => void check()}
                   onChooseBackend={chooseBackend}
-                  checking={checking}
+                  onDone={() => {
+                    setOnboarded(true);
+                    void window.lirovo.markOnboarded();
+                  }}
                 />
               </div>
-
-              <div className="mt-10 grid gap-8 lg:grid-cols-3">
-                <ListColumn
-                  title="Runs"
-                  count={runs.length}
-                  entries={runEntries}
-                  empty="Nothing extracted yet."
-                  onSelect={(id) => void openRun(id)}
-                  onTitle={() => setTab("library")}
-                />
-                <ListColumn
-                  title="Needs review"
-                  count={reviewEntries.length}
-                  entries={reviewEntries}
-                  empty="Every value carries evidence."
-                  onSelect={(id) => void openRun(id)}
-                  delay={0.05}
-                />
-                <ListColumn
-                  title="Activity"
-                  entries={activityEntries}
-                  empty="No run recorded yet."
-                  onTitle={() => setTab("library")}
-                  delay={0.1}
-                />
+            )}
+            {!firstRun && tab === "overview" && (
+              <div className="workspace-overview">
+                {running && activeRunId === null ? (
+                  <div className="workspace-progress">
+                    <RunProgress
+                      status="running"
+                      live={byRun.get(activeRunId ?? "") ?? new Map()}
+                      attempts={[]}
+                      errorMessage={error}
+                    />
+                  </div>
+                ) : (
+                  <div className="workspace-welcome">
+                    <LirovoMark className="text-ink-secondary mb-7 size-11 opacity-75" />
+                    <h1 className="text-ink text-[28px] font-normal leading-tight tracking-[-0.02em]">
+                      What would you like to extract?
+                    </h1>
+                  </div>
+                )}
+                <div className="workspace-compose">
+                  <p className="text-ink-tertiary mb-6 flex items-center gap-2 px-4 text-sm">
+                    <ShieldCheck className="size-3.5" aria-hidden="true" />
+                    Your library stays on this device.
+                  </p>
+                  {(bridgeError ??
+                    (system !== null && !system.ok
+                      ? (system.problems[0] ?? null)
+                      : null)) !== null && (
+                    <div
+                      role="alert"
+                      className="border-danger/30 bg-danger-soft text-danger-text mb-4 rounded-xl border p-4 text-sm"
+                    >
+                      <p>{bridgeError ?? system?.problems[0]}</p>
+                      <button
+                        className="mt-2 underline underline-offset-4"
+                        onClick={() => setTab("settings")}
+                      >
+                        Open settings to resolve this
+                      </button>
+                    </div>
+                  )}
+                  <fieldset disabled={running} className="min-w-0">
+                    <SchemaPicker
+                      label={schemaLabel}
+                      version={schemaVersion}
+                      fields={fields}
+                      onChoose={(choice) => {
+                        setFields([...choice.fields]);
+                        setSchemaLabel(choice.label);
+                        setRevisionId(choice.revisionId);
+                        setSelectedSchemaId(choice.schemaId ?? null);
+                        setSchemaVersion(null);
+                        if (choice.revisionId !== null) {
+                          void window.lirovo.listSchemas().then((answer) => {
+                            if (!answer.ok) return;
+                            setSchemaVersion(
+                              answer.value.find((x) => x.name === choice.label)
+                                ?.version ?? null,
+                            );
+                          });
+                        }
+                      }}
+                      onEdit={(next) => {
+                        setFields(next);
+                        setRevisionId(null);
+                        setSelectedSchemaId(null);
+                        setSchemaVersion(null);
+                        setSchemaLabel((current) =>
+                          current.endsWith(" (edited)")
+                            ? current
+                            : `${current} (edited)`,
+                        );
+                      }}
+                      onManage={() => setTab("schemas")}
+                    />
+                  </fieldset>
+                  <SourceInput
+                    value={source}
+                    onChange={setSource}
+                    onSubmit={() => void start()}
+                    busy={running}
+                    onBrowse={() => {
+                      void window.lirovo.pickFile().then((picked) => {
+                        if (picked.ok && picked.value !== null)
+                          setSource(picked.value);
+                      });
+                    }}
+                  />
+                  {error !== null && (
+                    <p
+                      role="alert"
+                      className="text-danger-text mt-3 break-words text-sm"
+                    >
+                      {error}
+                    </p>
+                  )}
+                </div>
               </div>
-            </>
-          )}
-
-          {!firstRun && tab === "schemas" && <SchemasPage />}
-
-          {!firstRun && tab === "settings" && (
-            <SettingsPage
-              report={system}
-              onRecheck={() => void check()}
-              onChooseBackend={chooseBackend}
-              checking={checking}
-            />
-          )}
-
-          {!firstRun && tab === "library" && (
-            <Library
-              runs={runs}
-              loading={runs.length === 0 && system === null && runsError === null}
-              error={runsError}
-              onOpen={(id) => void openRun(id)}
-            />
-          )}
-
-          {detail !== null && (
-            <RunView detail={detail} values={values} live={byRun.get(detail.runId) ?? new Map()} />
-          )}
+            )}
+            {!firstRun && tab !== "overview" && (
+              <div
+                className={
+                  detail !== null
+                    ? "mx-auto max-w-[1440px] px-6 py-7"
+                    : "mx-auto max-w-6xl px-6 py-8 lg:px-10"
+                }
+              >
+                {tab === "schemas" && <SchemasPage />}
+                {tab === "settings" && (
+                  <SettingsPage
+                    report={system}
+                    onRecheck={() => void check()}
+                    onChooseBackend={chooseBackend}
+                    checking={checking}
+                  />
+                )}
+                {tab === "library" && (
+                  <Library
+                    runs={runs}
+                    loading={
+                      runs.length === 0 && system === null && runsError === null
+                    }
+                    error={runsError}
+                    onOpen={(id) => void openRun(id)}
+                  />
+                )}
+                {detail !== null && (
+                  <RunView
+                    key={detail.runId}
+                    detail={detail}
+                    values={values}
+                    live={byRun.get(detail.runId) ?? new Map()}
+                  />
+                )}
+                {detail === null && sessionIds.current.has(tab) && (
+                  <p role="status" className="text-ink-secondary py-12">
+                    Opening extraction…
+                  </p>
+                )}
+              </div>
+            )}
+          </main>
         </div>
       </div>
-    </div>
+    </MotionConfig>
   );
 };

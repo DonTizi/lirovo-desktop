@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app, dialog, ipcMain, nativeTheme, shell, utilityProcess, type UtilityProcess } from "electron";
+import {
+  BrowserWindow,
+  app,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  shell,
+  utilityProcess,
+  type UtilityProcess,
+} from "electron";
 import {
   CHANNELS,
   defaultBackendSchema,
@@ -20,7 +29,15 @@ import {
 } from "./ipc.js";
 
 import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
-import { checkNow, currentVersion, downloadUpdate, installUpdate, setChannel, startUpdater, type UpdateChannel } from "./updater.js";
+import {
+  checkNow,
+  currentVersion,
+  downloadUpdate,
+  installUpdate,
+  setChannel,
+  startUpdater,
+  type UpdateChannel,
+} from "./updater.js";
 import type { EngineMessage } from "./engine-protocol.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +49,10 @@ const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
 
 let window: BrowserWindow | null = null;
 let engine: UtilityProcess | null = null;
-const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+const pending = new Map<
+  string,
+  { resolve: (v: unknown) => void; reject: (e: Error) => void }
+>();
 
 /**
  * Start, and keep, the engine process.
@@ -42,7 +62,9 @@ const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Err
  * spinner that never stops and a user who has no idea anything went wrong.
  */
 const startEngine = (): UtilityProcess => {
-  const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], { stdio: "inherit" });
+  const child = utilityProcess.fork(path.join(here, "engine-host.js"), [], {
+    stdio: "inherit",
+  });
 
   child.on("message", (message: unknown) => {
     const msg = message as EngineMessage;
@@ -62,7 +84,10 @@ const startEngine = (): UtilityProcess => {
     if (waiting === undefined) return;
     pending.delete(msg.id);
     if (msg.kind === "result") waiting.resolve(msg.value);
-    else waiting.reject(Object.assign(new Error(msg.error.message), { code: msg.error.code }));
+    else
+      waiting.reject(
+        Object.assign(new Error(msg.error.message), { code: msg.error.code }),
+      );
   });
 
   child.on("exit", () => {
@@ -86,12 +111,23 @@ const ask = <T>(message: Record<string, unknown>): Promise<T> => {
 };
 
 /** Nothing throws across the bridge; every call answers with a discriminated result. */
-const result = async <T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: { code: string; message: string } }> => {
+const result = async <T>(
+  fn: () => Promise<T>,
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; error: { code: string; message: string } }
+> => {
   try {
     return { ok: true, value: await fn() };
   } catch (error) {
     const code = (error as { code?: string }).code ?? "INTERNAL";
-    return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) } };
+    return {
+      ok: false,
+      error: {
+        code,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
   }
 };
 
@@ -101,7 +137,10 @@ const createWindow = (): void => {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: "#101012",
+    backgroundColor: process.platform === "darwin" ? "#00000000" : "#181818",
+    ...(process.platform === "darwin"
+      ? { vibrancy: "sidebar" as const, visualEffectState: "active" as const }
+      : {}),
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload: path.join(here, "../preload/index.cjs"),
@@ -145,7 +184,11 @@ const fromMainFrame = (event: Electron.IpcMainInvokeEvent): boolean =>
 const guard =
   <T>(handler: (payload: unknown) => Promise<T>) =>
   async (event: Electron.IpcMainInvokeEvent, payload: unknown) => {
-    if (!fromMainFrame(event)) return { ok: false, error: { code: "FORBIDDEN", message: "not the main frame" } };
+    if (!fromMainFrame(event))
+      return {
+        ok: false,
+        error: { code: "FORBIDDEN", message: "not the main frame" },
+      };
     return result(() => handler(payload));
   };
 
@@ -170,7 +213,10 @@ let channelAtBoot: UpdateChannel = "latest";
 app.whenReady().then(() => {
   installMediaProtocol();
 
-  void ask<{ updateChannel: UpdateChannel; theme: "system" | "light" | "dark" }>({ type: "preferences" })
+  void ask<{
+    updateChannel: UpdateChannel;
+    theme: "system" | "light" | "dark";
+  }>({ type: "preferences" })
     .then((prefs) => {
       channelAtBoot = prefs.updateChannel;
       setChannel(channelAtBoot);
@@ -190,50 +236,92 @@ app.whenReady().then(() => {
     canRestart: () => !busy,
     channel: () => channelAtBoot,
   });
-  ipcMain.handle(CHANNELS.doctor, guard(() => ask({ type: "doctor" })));
-  ipcMain.handle(CHANNELS.listRuns, guard(() => ask({ type: "listRuns" })));
+  ipcMain.handle(
+    CHANNELS.doctor,
+    guard(() => ask({ type: "doctor" })),
+  );
+  ipcMain.handle(
+    CHANNELS.listRuns,
+    guard(() => ask({ type: "listRuns" })),
+  );
 
   ipcMain.handle(
     CHANNELS.runDetail,
-    guard((payload) => ask({ type: "runDetail", runId: runIdSchema.parse(payload).runId })),
+    guard((payload) =>
+      ask({ type: "runDetail", runId: runIdSchema.parse(payload).runId }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.extract,
-    guard((payload) => ask({ type: "extract", request: extractRequestSchema.parse(payload) })),
+    guard((payload) =>
+      ask({ type: "extract", request: extractRequestSchema.parse(payload) }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.inspect,
-    guard((payload) => ask({ type: "inspect", source: inspectRequestSchema.parse(payload).source })),
+    guard((payload) =>
+      ask({
+        type: "inspect",
+        source: inspectRequestSchema.parse(payload).source,
+      }),
+    ),
   );
 
-  ipcMain.handle(CHANNELS.listSchemas, guard(() => ask({ type: "listSchemas" })));
+  ipcMain.handle(
+    CHANNELS.listSchemas,
+    guard(() => ask({ type: "listSchemas" })),
+  );
   ipcMain.handle(
     CHANNELS.saveSchema,
-    guard((payload) => ask({ type: "saveSchema", input: saveSchemaRequestSchema.parse(payload) })),
+    guard((payload) =>
+      ask({
+        type: "saveSchema",
+        input: saveSchemaRequestSchema.parse(payload),
+      }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.schemaRevisions,
-    guard((payload) => ask({ type: "schemaRevisions", schemaId: schemaIdSchema.parse(payload).schemaId })),
+    guard((payload) =>
+      ask({
+        type: "schemaRevisions",
+        schemaId: schemaIdSchema.parse(payload).schemaId,
+      }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.archiveSchema,
-    guard((payload) => ask({ type: "archiveSchema", schemaId: schemaIdSchema.parse(payload).schemaId })),
+    guard((payload) =>
+      ask({
+        type: "archiveSchema",
+        schemaId: schemaIdSchema.parse(payload).schemaId,
+      }),
+    ),
   );
 
   ipcMain.handle(
     CHANNELS.runArtifacts,
-    guard((payload) => ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId })),
+    guard((payload) =>
+      ask({ type: "runArtifacts", runId: runIdSchema.parse(payload).runId }),
+    ),
   );
   ipcMain.handle(
     CHANNELS.install,
     guard((payload) => {
       const { what, model } = installSchema.parse(payload);
-      return ask({ type: "install", what, ...(model === undefined ? {} : { model }) });
+      return ask({
+        type: "install",
+        what,
+        ...(model === undefined ? {} : { model }),
+      });
     }),
   );
-  ipcMain.handle(CHANNELS.storage, guard(() => ask({ type: "storage" })));
+  ipcMain.handle(
+    CHANNELS.storage,
+    guard(() => ask({ type: "storage" })),
+  );
 
   // --- updates -------------------------------------------------------------
   //
@@ -245,8 +333,14 @@ app.whenReady().then(() => {
   ipcMain.handle(
     CHANNELS.updateState,
     guard(async () => {
-      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
-      return { version: currentVersion(), channel: prefs.updateChannel, supported: app.isPackaged };
+      const prefs = (await ask({ type: "preferences" })) as {
+        updateChannel: UpdateChannel;
+      };
+      return {
+        version: currentVersion(),
+        channel: prefs.updateChannel,
+        supported: app.isPackaged,
+      };
     }),
   );
   ipcMain.handle(
@@ -255,12 +349,20 @@ app.whenReady().then(() => {
       // The channel decides the wording of a failure — "no stable release yet"
       // only makes sense to someone on stable — so it is read here rather than
       // guessed inside the updater.
-      const prefs = (await ask({ type: "preferences" })) as { updateChannel: UpdateChannel };
+      const prefs = (await ask({ type: "preferences" })) as {
+        updateChannel: UpdateChannel;
+      };
       return checkNow(prefs.updateChannel);
     }),
   );
-  ipcMain.handle(CHANNELS.updateDownload, guard(() => downloadUpdate()));
-  ipcMain.handle(CHANNELS.updateInstall, guard(async () => installUpdate(() => !busy)));
+  ipcMain.handle(
+    CHANNELS.updateDownload,
+    guard(() => downloadUpdate()),
+  );
+  ipcMain.handle(
+    CHANNELS.updateInstall,
+    guard(async () => installUpdate(() => !busy)),
+  );
   ipcMain.handle(
     CHANNELS.updateChannel,
     guard(async (payload) => {
@@ -304,18 +406,28 @@ app.whenReady().then(() => {
     guard(async (payload) => {
       const { what } = purgeSchema.parse(payload);
       const everything = what === "everything";
-      const { response } = await dialog.showMessageBox(window as BrowserWindow, {
-        type: "warning",
-        buttons: ["Cancel", everything ? "Delete everything" : "Delete extractions"],
-        defaultId: 0,
-        cancelId: 0,
-        message: everything ? "Delete everything Lirovo has stored?" : "Delete every extraction?",
-        detail: everything
-          ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
-          : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
-      });
+      const { response } = await dialog.showMessageBox(
+        window as BrowserWindow,
+        {
+          type: "warning",
+          buttons: [
+            "Cancel",
+            everything ? "Delete everything" : "Delete extractions",
+          ],
+          defaultId: 0,
+          cancelId: 0,
+          message: everything
+            ? "Delete everything Lirovo has stored?"
+            : "Delete every extraction?",
+          detail: everything
+            ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
+            : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
+        },
+      );
       if (response !== 1) return { cancelled: true, freedBytes: 0 };
-      const result = (await ask({ type: "purge", what })) as { freedBytes: number };
+      const result = (await ask({ type: "purge", what })) as {
+        freedBytes: number;
+      };
       return { cancelled: false, ...result };
     }),
   );
@@ -329,14 +441,21 @@ app.whenReady().then(() => {
       const { resolvePaths } = await import("@lirovo/node-runtime");
       const root = resolvePaths().data;
       const resolved = path.resolve(target);
-      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return { revealed: false };
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`))
+        return { revealed: false };
       shell.showItemInFolder(resolved);
       return { revealed: true };
     }),
   );
 
-  ipcMain.handle(CHANNELS.preferences, guard(() => ask({ type: "preferences" })));
-  ipcMain.handle(CHANNELS.markOnboarded, guard(() => ask({ type: "markOnboarded" })));
+  ipcMain.handle(
+    CHANNELS.preferences,
+    guard(() => ask({ type: "preferences" })),
+  );
+  ipcMain.handle(
+    CHANNELS.markOnboarded,
+    guard(() => ask({ type: "markOnboarded" })),
+  );
   ipcMain.handle(
     CHANNELS.runFix,
     guard((payload) => {
@@ -350,17 +469,39 @@ app.whenReady().then(() => {
   );
   ipcMain.handle(
     CHANNELS.setDefaultBackend,
-    guard((payload) => ask({ type: "setDefaultBackend", backendId: defaultBackendSchema.parse(payload).backendId })),
+    guard((payload) =>
+      ask({
+        type: "setDefaultBackend",
+        backendId: defaultBackendSchema.parse(payload).backendId,
+      }),
+    ),
   );
 
-  ipcMain.handle(CHANNELS.cancel, guard(() => ask({ type: "cancel" })));
+  ipcMain.handle(
+    CHANNELS.cancel,
+    guard(() => ask({ type: "cancel" })),
+  );
 
   ipcMain.handle(
     CHANNELS.pickFile,
     guard(async () => {
       const picked = await dialog.showOpenDialog({
         properties: ["openFile"],
-        filters: [{ name: "Video or audio", extensions: ["mp4", "mov", "mkv", "webm", "m4a", "mp3", "wav", "flac"] }],
+        filters: [
+          {
+            name: "Video or audio",
+            extensions: [
+              "mp4",
+              "mov",
+              "mkv",
+              "webm",
+              "m4a",
+              "mp3",
+              "wav",
+              "flac",
+            ],
+          },
+        ],
       });
       return picked.canceled ? null : (picked.filePaths[0] ?? null);
     }),

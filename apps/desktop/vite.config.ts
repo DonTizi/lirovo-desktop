@@ -26,14 +26,23 @@ export default defineConfig({
     electron([
       {
         entry: "src/main/index.ts",
-        vite: { build: { outDir: "dist-electron/main", rollupOptions: { external: ["electron", ...EXTERNAL] } } },
+        vite: {
+          build: {
+            outDir: "dist-electron/main",
+            rollupOptions: { external: ["electron", ...EXTERNAL] },
+          },
+        },
       },
       {
         entry: "src/main/engine-host.ts",
-        vite: { build: { outDir: "dist-electron/main", rollupOptions: { external: ["electron", ...EXTERNAL] } } },
+        vite: {
+          build: {
+            outDir: "dist-electron/main",
+            rollupOptions: { external: ["electron", ...EXTERNAL] },
+          },
+        },
       },
       {
-        entry: "src/preload/index.ts",
         onstart: ({ reload }) => reload(),
         vite: {
           build: {
@@ -44,15 +53,20 @@ export default defineConfig({
             // window comes up looking fine with no `window.lirovo` on it and
             // nothing in any log. Found exactly that way.
             //
-            // Set through `lib`, not `rollupOptions.output.format` — the
-            // plugin builds its own `lib` config and the output override is
-            // discarded.
-            lib: {
-              entry: "src/preload/index.ts",
-              formats: ["cjs"],
-              fileName: () => "index.cjs",
+            // Use an explicit Rollup input instead of the flat plugin's
+            // `entry` shortcut. In a `type: module` package that shortcut
+            // enables an ESM library build; merging `formats: ["cjs"]` adds a
+            // second format rather than replacing it, and both formats race
+            // to write the same file while watching.
+            rollupOptions: {
+              input: "src/preload/index.ts",
+              external: ["electron"],
+              output: {
+                format: "cjs",
+                inlineDynamicImports: true,
+                entryFileNames: "index.cjs",
+              },
             },
-            rollupOptions: { external: ["electron"] },
           },
         },
       },

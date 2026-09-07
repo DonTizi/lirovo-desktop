@@ -24,6 +24,7 @@ export const useLens = (): Lens => {
   const [playing, setPlaying] = useState(false);
   const video = useRef<HTMLVideoElement | null>(null);
   const frame = useRef<number | null>(null);
+  const detach = useRef<(() => void) | null>(null);
 
   // `timeupdate` fires about four times a second, which is visibly steppy for a
   // playhead. Reading currentTime on every animation frame while playing is
@@ -42,6 +43,8 @@ export const useLens = (): Lens => {
   }, [playing]);
 
   const attach = useCallback((el: HTMLVideoElement | null) => {
+    detach.current?.();
+    detach.current = null;
     video.current = el;
     if (el === null) return;
     const onTime = (): void => setT(el.currentTime);
@@ -52,6 +55,13 @@ export const useLens = (): Lens => {
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     el.addEventListener("ended", onPause);
+    detach.current = () => {
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("seeked", onTime);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onPause);
+    };
   }, []);
 
   const seek = useCallback((to: number) => {

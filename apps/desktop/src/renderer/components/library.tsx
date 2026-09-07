@@ -1,4 +1,6 @@
 import { motion } from "framer-motion";
+import { useState } from "react";
+import { groupRuns, runGroupKey } from "../lib/run-groups";
 import { AlertTriangle, FileVideo, Link2 } from "lucide-react";
 import type { RunSummary } from "../../bridge/contract.js";
 import { Hero } from "./hero";
@@ -29,16 +31,24 @@ const STATUS_TINT: Record<string, string> = {
 
 /** Short code for a source kind, the way a data product wears one. */
 function KindBadge({ kind }: { kind: string | null }): JSX.Element {
-  const label = kind === "file" ? "FILE" : (kind ?? "url").slice(0, 3).toUpperCase();
+  const label =
+    kind === "file" ? "FILE" : (kind ?? "url").slice(0, 3).toUpperCase();
   return (
-    <span title={kind ?? "url"} className="bg-fill-hover text-ink-label rounded px-1.5 py-0.5 text-[10px] font-semibold">
+    <span
+      title={kind ?? "url"}
+      className="bg-fill-hover text-ink-label rounded px-1.5 py-0.5 text-[10px] font-semibold"
+    >
       {label}
     </span>
   );
 }
 
 const COLUMNS: readonly TableColumn<RunSummary>[] = [
-  { key: "kind", label: "Kind", cell: (r) => <KindBadge kind={r.sourceType} /> },
+  {
+    key: "kind",
+    label: "Kind",
+    cell: (r) => <KindBadge kind={r.sourceType} />,
+  },
   {
     key: "source",
     label: "Source",
@@ -111,7 +121,9 @@ const COLUMNS: readonly TableColumn<RunSummary>[] = [
             />
           </div>
           <span>
-            <span className="text-ink-strong font-medium">{r.groundedCount}</span>
+            <span className="text-ink-strong font-medium">
+              {r.groundedCount}
+            </span>
             <span className="text-ink-subtle">/{r.valueCount}</span>
           </span>
         </div>
@@ -137,15 +149,24 @@ function StalledBanner({
 }): JSX.Element | null {
   if (runs.length === 0) return null;
   return (
-    <section className={cn("border-danger-text/20 bg-danger-tint/40 rounded-xl border px-5 py-4", className)}>
+    <section
+      className={cn(
+        "border-danger-text/20 bg-danger-tint/40 rounded-xl border px-5 py-4",
+        className,
+      )}
+    >
       <p className="text-danger-text flex items-center gap-2 text-sm font-medium">
         <AlertTriangle className="size-4" strokeWidth={1.75} />
-        {runs.length === 1 ? "1 run needs attention" : `${runs.length} runs need attention`}
+        {runs.length === 1
+          ? "1 run needs attention"
+          : `${runs.length} runs need attention`}
       </p>
       <ul className="mt-2 space-y-1">
         {runs.map((run) => (
           <li key={run.runId} className="flex items-center gap-3 text-[13px]">
-            <span className="truncate font-medium">{run.title ?? run.runId}</span>
+            <span className="truncate font-medium">
+              {run.title ?? run.runId}
+            </span>
             <span className="text-ink-subtle whitespace-nowrap">
               {run.status} {ago(run.createdAt)}
             </span>
@@ -175,13 +196,53 @@ export function Library({
   onOpen: (runId: string) => void;
 }): JSX.Element {
   const { columns, hidden, onToggle, onShowAll } = useColumns(COLUMNS);
+  const [schemaFilter, setSchemaFilter] = useState<string | null>(null);
+  const groups = groupRuns(runs);
+  const currentFilter = groups.some((group) => group.key === schemaFilter)
+    ? schemaFilter
+    : null;
+  const filtered =
+    currentFilter === null
+      ? runs
+      : runs.filter((run) => runGroupKey(run) === currentFilter);
 
-  const stalled = runs.filter((r) => r.status === "failed" || r.status === "stopped");
-  const listed = runs.filter((r) => r.status !== "failed" && r.status !== "stopped");
+  const stalled = filtered.filter(
+    (r) => r.status === "failed" || r.status === "stopped",
+  );
+  const listed = filtered.filter(
+    (r) => r.status !== "failed" && r.status !== "stopped",
+  );
 
   return (
     <div className="pb-16">
-      <Hero title="Library" sub="Newest first. Every value keeps the moment that proves it." />
+      <Hero
+        title="Library"
+        sub="Newest first. Every value keeps the moment that proves it."
+      />
+      <div
+        className="mt-6 flex flex-wrap gap-2"
+        aria-label="Filter extractions by schema"
+        role="group"
+      >
+        {[{ key: null, name: "All schemas", runs }, ...groups].map((group) => (
+          <button
+            key={group.key ?? "all"}
+            aria-pressed={currentFilter === group.key}
+            onClick={() => setSchemaFilter(group.key)}
+            className={cn(
+              "rounded-lg border px-3 py-2 text-xs transition-colors",
+              currentFilter === group.key
+                ? "border-line bg-fill text-ink"
+                : "border-hairline text-ink-secondary hover:bg-elevated",
+            )}
+          >
+            {group.name}{" "}
+            <span className="text-ink-tertiary ml-1 tabular-nums">
+              {group.runs.length}
+            </span>
+          </button>
+        ))}
+      </div>
 
       <StalledBanner runs={stalled} onOpen={onOpen} className="mt-10" />
 
@@ -193,7 +254,12 @@ export function Library({
               {listed.length}
             </span>
           </div>
-          <ColumnPicker columns={COLUMNS} hidden={hidden} onToggle={onToggle} onShowAll={onShowAll} />
+          <ColumnPicker
+            columns={COLUMNS}
+            hidden={hidden}
+            onToggle={onToggle}
+            onShowAll={onShowAll}
+          />
         </div>
 
         <StationTable
@@ -203,7 +269,11 @@ export function Library({
           onRowClick={(run) => onOpen(run.runId)}
           {...(loading ? { loading } : {})}
           {...(error !== null && error !== undefined ? { error } : {})}
-          empty={stalled.length > 0 ? "Nothing finished yet." : "Nothing extracted yet."}
+          empty={
+            stalled.length > 0
+              ? "Nothing finished yet."
+              : "Nothing extracted yet."
+          }
           actions={(run) => (
             <button
               onClick={() => onOpen(run.runId)}

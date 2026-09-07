@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { recordRunSchema, runCategory } from "./run-category";
 import { mkdir } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join as pathJoin } from "node:path";
@@ -125,6 +126,8 @@ const listRuns = (): RunSummary[] =>
                 r.lease_expires_at AS leaseExpiresAt,
                 s.duration_s AS durationS, s.kind AS sourceType,
                 sr.name AS schemaName,
+                sr.id AS savedSchemaId, m.schema_json AS schemaJson, m.settings_json AS settingsJson,
+                (SELECT json_group_array(DISTINCT field_path) FROM extracted_values WHERE run_id = r.id) AS fieldPathsJson,
                 (SELECT COUNT(*) FROM extracted_values v WHERE v.run_id = r.id) AS valueCount,
                 (SELECT COUNT(DISTINCT ve.observation_id)
                    FROM extracted_values v2
@@ -142,15 +145,32 @@ const listRuns = (): RunSummary[] =>
            JOIN sources s ON s.id = r.source_id
            LEFT JOIN schema_revisions rev ON rev.id = r.schema_revision_id
            LEFT JOIN schemas sr ON sr.id = rev.schema_id
+           LEFT JOIN run_manifests m ON m.run_id = r.id
           ORDER BY r.created_at DESC LIMIT 200`,
       )
-      .all() as unknown as (RunSummary & { status: RunStatus; leaseExpiresAt: number | null })[];
+      .all() as unknown as (RunSummary & {
+        status: RunStatus;
+        leaseExpiresAt: number | null;
+        savedSchemaId: string | null;
+        schemaJson: string | null;
+        settingsJson: string | null;
+        fieldPathsJson: string;
+      })[];
     // Derived on read, never written: a row that says running an hour after its
     // process died is the single most misleading thing this list can show.
-    return rows.map(({ leaseExpiresAt, ...row }) => ({
-      ...row,
-      status: observedStatus(row.status, leaseExpiresAt),
-    }));
+    return rows.map(
+      ({ leaseExpiresAt, savedSchemaId, schemaJson, settingsJson, fieldPathsJson, ...row }) => ({
+        ...row,
+        ...runCategory({
+          savedSchemaId,
+          savedName: row.schemaName,
+          schemaJson,
+          settingsJson,
+          fieldPaths: JSON.parse(fieldPathsJson) as string[],
+        }),
+        status: observedStatus(row.status, leaseExpiresAt),
+      }),
+    );
   });
 
 const runDetail = (runId: string): RunDetail | null =>
@@ -245,6 +265,7 @@ const runArtifacts = async (runId: string): Promise<RunArtifacts> => {
 
   const videoPath = store.resolve(runId, ARTIFACT_PATHS.video);
   const hasVideo = await store.exists(runId, ARTIFACT_PATHS.video);
+  const hasAudio = await store.exists(runId, ARTIFACT_PATHS.audio);
 
   // Dedup is the list worth showing — the kept frames are the ones the model
   // was actually given — but a run that failed before dedup only has raw.
@@ -261,6 +282,7 @@ const runArtifacts = async (runId: string): Promise<RunArtifacts> => {
 
   return {
     videoUrl: hasVideo ? mediaUrl(videoPath) : null,
+    audioUrl: hasAudio ? mediaUrl(store.resolve(runId, ARTIFACT_PATHS.audio)) : null,
     durationS: manifest?.duration_s ?? transcript?.durationS ?? null,
     transcript,
     frames,
@@ -498,6 +520,7 @@ const extract = async (request: ExtractRequest): Promise<unknown> => {
         // The revision is what makes the result explainable later: without it a
         // run cannot say what it was asked for.
         runs.createRun(runId, sourceId, request.schemaRevisionId ?? null, owner);
+        recordRunSchema(db, runId, request);
         // The lease is good for a minute and a run takes six. Held from the
         // moment the row exists until the `finally` below, or the library
         // reads a working extraction as stopped and another process is free

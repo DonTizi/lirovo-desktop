@@ -32,6 +32,8 @@ export interface ExtractRequest {
    * that the first time it ran.
    */
   readonly schemaRevisionId?: string | null | undefined;
+  /** Display name captured with the requested schema, never sent as a prompt. */
+  readonly schemaName?: string | null | undefined;
 }
 
 /**
@@ -165,6 +167,8 @@ export interface RunDetail {
 export interface RunArtifacts {
   /** `lirovo-media://` for the normalized stream; null when normalize never ran. */
   readonly videoUrl: string | null;
+  /** Normalization keeps sound separately from the silent video stream. */
+  readonly audioUrl: string | null;
   readonly durationS: number | null;
   readonly transcript: {
     readonly engine: string | null;
@@ -212,6 +216,7 @@ export interface RunSummary {
   readonly durationS: number | null;
   readonly sourceType: string | null;
   readonly schemaName: string | null;
+  readonly schemaKey?: string;
   /** Null when dedup never finished, which is not the same as zero frames. */
   readonly frameCount: number | null;
 }

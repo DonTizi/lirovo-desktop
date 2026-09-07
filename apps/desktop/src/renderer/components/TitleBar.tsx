@@ -1,87 +1,94 @@
-import { RefreshCw, Search, X } from "lucide-react";
-import { Ring } from "./Ring";
+import { PanelLeftOpen, RefreshCw, Search, X } from "lucide-react";
+import { cn } from "../lib/cn";
 
-const drag = { WebkitAppRegion: "drag" } as React.CSSProperties;
-const noDrag = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
-
-/**
- * The window's own bar: wordmark, search, a completeness dial, and the one
- * primary action.
- *
- * `pl-traffic` reserves the macOS close/minimise/zoom buttons. Any surface
- * drawn at the window's top-left must carry it, or the traffic lights land on
- * top of the content.
- */
 export function TitleBar({
+  title,
   query,
   onQuery,
   grounded,
   total,
+  showSearch,
   running,
   onCancel,
   onRefresh,
+  sidebarCollapsed,
+  onShowSidebar,
+  toggleRef,
 }: {
+  title: string;
   query: string;
-  onQuery: (v: string) => void;
+  onQuery: (value: string) => void;
   grounded: number;
   total: number;
+  showSearch: boolean;
   running: boolean;
   onCancel: () => void;
   onRefresh: () => void;
+  sidebarCollapsed: boolean;
+  onShowSidebar: () => void;
+  toggleRef: React.RefObject<HTMLButtonElement>;
 }): JSX.Element {
-  const pct = total > 0 ? grounded / total : 0;
-
   return (
     <header
-      className="border-hairline bg-base pl-traffic flex h-[52px] shrink-0 items-center gap-3 border-b pr-4"
-      style={drag}
+      className={cn(
+        "workspace-toolbar flex min-h-10 shrink-0 items-center gap-3 px-4",
+        sidebarCollapsed && "pl-traffic",
+      )}
     >
-      <span className="text-ink text-[15px] font-semibold tracking-tight">Lirovo</span>
-
-      <div className="relative ml-2 w-80" style={noDrag}>
-        <Search size={15} className="text-ink-tertiary pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2" />
-        <input
-          className="border-line bg-surface-subtle text-ink placeholder:text-ink-tertiary focus:border-brand focus:bg-surface focus:ring-brand/20 h-9 w-full rounded-lg border pl-8 pr-8 text-sm outline-none transition-colors focus:ring-2"
-          placeholder="Search values and evidence"
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-        />
-        {query !== "" && (
-          <button
-            className="text-ink-tertiary hover:text-ink absolute right-2 top-1/2 -translate-y-1/2"
-            onClick={() => onQuery("")}
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
-
-      <div className="ml-auto flex items-center gap-2.5" style={noDrag}>
-        <div
-            className="bg-surface-subtle flex items-center gap-2 rounded-full px-2.5 py-1"
-            title={`${grounded} of ${total} values carry evidence`}
-          >
-            <Ring value={pct} size={18} stroke={3} tone={pct >= 1 ? "governed" : "brand"} />
-            <span className="text-ink-secondary text-xs font-medium">{Math.round(pct * 100)}% grounded</span>
-        </div>
+      {sidebarCollapsed && (
         <button
-          className="text-ink-tertiary hover:bg-surface-subtle hover:text-ink-secondary rounded-md p-2 transition-colors"
-          onClick={onRefresh}
-          title="Reload runs"
+          onClick={onShowSidebar}
+          ref={toggleRef}
+          className="text-ink-tertiary hover:text-ink rounded-lg p-2"
+          aria-label="Show sidebar"
         >
-          <RefreshCw size={15} className={running ? "animate-spin" : ""} />
+          <PanelLeftOpen className="size-4" />
         </button>
-        {/* Only Cancel lives up here now. Extract belongs to the field, and two
-            buttons doing one job leaves a person guessing which is the real one. */}
-        {running ? (
-          <button
-            className="liq-solid h-9 rounded-lg px-4 text-sm font-medium"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-        ) : null}
-      </div>
+      )}
+      <span className="text-ink-secondary min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+        {title}
+      </span>
+      {showSearch && (
+        <div className="relative w-56 shrink">
+          <Search className="text-ink-tertiary pointer-events-none absolute left-2.5 top-2.5 size-3.5" />
+          <input
+            className="border-line-subtle bg-surface-subtle placeholder:text-ink-tertiary h-9 w-full rounded-lg border pl-8 pr-8 text-sm"
+            aria-label="Search values and evidence"
+            placeholder="Search values…"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+          />
+          {query !== "" && (
+            <button
+              aria-label="Clear search"
+              onClick={() => onQuery("")}
+              className="text-ink-tertiary absolute right-2 top-2.5"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+      {showSearch && total > 0 && (
+        <span className="text-ink-tertiary whitespace-nowrap text-xs">
+          {grounded}/{total} with evidence
+        </span>
+      )}
+      <button
+        className="text-ink-tertiary hover:bg-surface-raised hover:text-ink rounded-lg p-2"
+        onClick={onRefresh}
+        aria-label="Reload runs"
+      >
+        <RefreshCw className="size-4" />
+      </button>
+      {running && (
+        <button
+          className="border-line text-ink-secondary rounded-lg border px-3 py-1.5 text-sm"
+          onClick={onCancel}
+        >
+          Cancel extraction
+        </button>
+      )}
     </header>
   );
 }

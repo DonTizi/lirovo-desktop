@@ -1,7 +1,9 @@
-import { Film } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Film, Volume2, VolumeX } from "lucide-react";
 import type { RunArtifacts } from "../../../bridge/contract.js";
 import { formatTime, type Lens } from "./lens";
 import { cn } from "../../lib/cn";
+import { syncAudio } from "./sync-audio";
 
 /**
  * The player, the filmstrip and the timeline, as one control.
@@ -35,12 +37,32 @@ export function Player({
   artifacts,
   lens,
   marks,
+  working = false,
 }: {
   artifacts: RunArtifacts;
   lens: Lens;
   /** Instants worth pointing at — one per evidence span. */
   marks: readonly { readonly t: number; readonly label: string }[];
+  working?: boolean;
 }): JSX.Element {
+  const video = useRef<HTMLVideoElement | null>(null);
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [audioError, setAudioError] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const attach = useCallback(
+    (el: HTMLVideoElement | null) => {
+      video.current = el;
+      lens.attach(el);
+    },
+    [lens.attach],
+  );
+  useEffect(() => {
+    setAudioError(false);
+    setVideoError(false);
+    if (video.current === null || audio.current === null) return;
+    return syncAudio(video.current, audio.current, () => setAudioError(true));
+  }, [artifacts.videoUrl, artifacts.audioUrl]);
   const durationS = artifacts.durationS ?? 1;
   const kept = artifacts.frames.filter((f) => f.kept);
 
@@ -51,32 +73,91 @@ export function Player({
   const wanted = Math.min(6, kept.length);
   const strip = Array.from({ length: wanted }, (_, i) => {
     const target = ((i + 0.5) / wanted) * durationS * 1000;
-    return kept.reduce((best, f) => (Math.abs(f.tMs - target) < Math.abs(best.tMs - target) ? f : best));
+    return kept.reduce((best, f) =>
+      Math.abs(f.tMs - target) < Math.abs(best.tMs - target) ? f : best,
+    );
   }).filter((f, i, all) => all.findIndex((x) => x.idx === f.idx) === i);
 
-  const at = (t: number): string => `${Math.min(100, Math.max(0, (t / durationS) * 100))}%`;
+  const at = (t: number): string =>
+    `${Math.min(100, Math.max(0, (t / durationS) * 100))}%`;
 
   return (
     <div className="bg-base shadow-ring overflow-hidden rounded-lg">
       {artifacts.videoUrl === null ? (
         <div className="text-ink-subtle flex h-40 flex-col items-center justify-center gap-2 text-sm">
           <Film className="size-5" />
-          No video was kept for this run.
+          {working
+            ? "Preparing your recording…"
+            : "No video was kept for this run."}
         </div>
       ) : (
         <video
-          ref={lens.attach}
+          ref={attach}
           controls
           preload="metadata"
           src={artifacts.videoUrl}
+          onError={() => setVideoError(true)}
           className="max-h-[46vh] w-full bg-black"
         />
+      )}
+      {videoError && (
+        <p role="alert" className="p-3 text-xs text-warning">
+          This recording could not be played. Your results and source images are
+          still available.
+        </p>
+      )}
+      {artifacts.audioUrl !== null && artifacts.videoUrl !== null && (
+        <div className="border-hairline flex items-center gap-2 border-t px-2 py-1">
+          <audio
+            ref={audio}
+            src={artifacts.audioUrl}
+            preload="metadata"
+            muted={muted}
+            onPlaying={() => setAudioError(false)}
+          />
+          <button
+            type="button"
+            aria-label={muted ? "Unmute recording" : "Mute recording"}
+            aria-pressed={muted}
+            className="flex min-h-8 items-center gap-2 rounded-md px-2 text-xs text-ink-secondary hover:bg-raised focus-visible:outline focus-visible:outline-2"
+            onClick={() => setMuted((value) => !value)}
+          >
+            {muted ? (
+              <VolumeX className="size-3.5" />
+            ) : (
+              <Volume2 className="size-3.5" />
+            )}
+            {muted ? "Sound off" : "Sound on"}
+          </button>
+          {audioError && (
+            <button
+              type="button"
+              className="min-h-8 text-xs text-warning underline"
+              onClick={() => {
+                const track = audio.current;
+                const movie = video.current;
+                if (track === null || movie === null) return;
+                if (track.error !== null) track.load();
+                track.currentTime = movie.currentTime;
+                void movie.play().catch(() => setVideoError(true));
+                void track
+                  .play()
+                  .then(() => setAudioError(false))
+                  .catch(() => setAudioError(true));
+              }}
+            >
+              Audio unavailable · retry
+            </button>
+          )}
+        </div>
       )}
 
       {strip.length > 0 && (
         <div className="border-hairline flex h-16 gap-px border-t">
           {strip.map((frame) => {
-            const active = Math.abs(lens.t * 1000 - frame.tMs) < (durationS * 1000) / (strip.length * 2);
+            const active =
+              Math.abs(lens.t * 1000 - frame.tMs) <
+              (durationS * 1000) / (strip.length * 2);
             return (
               <button
                 key={frame.idx}
@@ -87,14 +168,22 @@ export function Player({
                   active ? "opacity-100" : "opacity-70 hover:opacity-100",
                 )}
               >
-                <img src={frame.url} alt="" loading="lazy" decoding="async" className="size-full object-cover" />
+                <img
+                  src={frame.url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="size-full object-cover"
+                />
                 {/* Shown on the current frame and on hover only: six timecodes
                     printed permanently is a caption competing with the picture
                     it is captioning. */}
                 <span
                   className={cn(
                     "absolute bottom-0.5 right-1 rounded bg-black/70 px-1 font-mono text-[10px] tabular-nums text-white transition-opacity",
-                    active ? "opacity-100" : "opacity-0 group-hover/strip:opacity-100",
+                    active
+                      ? "opacity-100"
+                      : "opacity-0 group-hover/strip:opacity-100",
                   )}
                 >
                   {formatTime(frame.tMs / 1000)}
@@ -114,7 +203,10 @@ export function Player({
           lens.seek(((e.clientX - box.left) / box.width) * durationS);
         }}
       >
-        {thinned(marks.map((m) => m.t), durationS).map((t) => (
+        {thinned(
+          marks.map((m) => m.t),
+          durationS,
+        ).map((t) => (
           <span
             key={`m${t}`}
             title={formatTime(t)}
