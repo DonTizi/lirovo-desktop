@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.2...v0.5.0) (2026-09-07)
+
+
+### Added
+
+* **desktop:** refresh workspace, live extraction review and knowledge graph ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+* **exports:** export complete extraction artifacts with verified inventories ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+* **knowledge:** add reviewable source-linked search, comparison and cited answers ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+* **reliability:** add durable extraction recovery, verified backups and reversible archive ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+
+
+### Fixed
+
+* **desktop:** recover failed media reads and stabilize purge concurrency checks ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+* **transcription:** use multilingual defaults and preserve quality failures ([7bc88fe](https://github.com/DonTizi/lirovo-desktop/commit/7bc88fe0bf0d2d9162c5272316de2e4dae305481))
+
 ## [0.4.2](https://github.com/DonTizi/lirovo-desktop/compare/v0.4.1...v0.4.2) (2026-08-28)
 
 
