@@ -34,6 +34,14 @@ Real Electron smoke verified edit/accept/history, restart persistence, timestamp
 
 Keyword recall, schema-field comparison and known citation IDs do not prove semantic completeness, entity identity, agreement or factual truth. Arbitrary complex JSON Schema validation is not promised for legacy corrections. Question/answer history is not persisted across navigation. Transcript editing/recomputation, semantic retrieval, entity resolution, assistant-facing APIs and held-out real-user evaluation remain separate work.
 
+## Search-first desktop surface (2026-09-07)
+
+The Knowledge page now exposes only local keyword retrieval: a search home, single-column source-linked results, reviewed/extraction filters and ten complete results per page. Chat, provider consent and comparison controls are removed from this page at the user's request. Their backend APIs remain intact but unused by this surface. This supersedes the earlier multipurpose Knowledge UI described above, not the review or export architecture.
+
+Keep draft input separate from the submitted query, ignore obsolete responses, and allocate a fresh request identity even when retrying identical filters. The latter was caught by the native error/retry replay. Highlighting preserves every character, including combining accents and literal markup; quotes remain text, not HTML. The persistent status region updates without replacing its DOM node. Search covers saved extraction values, titles, field paths and linked quotes, not entire transcripts or graph artifacts.
+
+Build/typecheck/preload guard, 104 desktop tests and seven retrieval tests passed. An isolated Electron library verified real search IPC, pagination, review/source filters, accent matching, complete evidence and source playback at 0:03. Controlled transport replay verified stale-response rejection, failure/retry and empty-library presentation; light/900px/reduced-motion checks passed with zero page errors or generation/comparison calls. Fresh review accepted; aesthetic preference and screen-reader speech still need human judgment. Search state is not persisted when leaving Knowledge. See [search contract and evidence](../design/knowledge-search-contract.md).
+
 ## Links
 
 - [Implementation contract](../design/knowledge-workspace-contract.md)

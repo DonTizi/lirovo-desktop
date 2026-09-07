@@ -1,107 +1,151 @@
-import {useEffect, useRef, useState} from "react";
-import {ArrowUpRight, Search, Columns2, BookOpen, Sparkles, Square} from "lucide-react";
-import type {BackendStatus, DoctorReport} from "@lirovo/core";
-import type {KnowledgeAnswer, KnowledgeComparison, KnowledgeHit, KnowledgeResult, RunSummary} from "../../bridge/contract";
-import {formatTime} from "./run/lens";
+import { memo, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronLeft, ChevronRight, Film, Search, ShieldCheck, X } from "lucide-react";
+import type { KnowledgeHit, KnowledgeResult, RunSummary } from "../../bridge/contract";
+import { LirovoMark } from "./LirovoMark";
+import { formatTime } from "./run/lens";
+import { fieldLabel, highlightWords, sourceLabel } from "./knowledge-presentation";
+import "./knowledge-search.css";
 
-export function KnowledgePage({runs,onOpen}: {runs: readonly RunSummary[]; onOpen:(runId:string,t?:number)=>void}):JSX.Element {
-  const [query,setQuery]=useState("");
-  const [approved,setApproved]=useState(false);
-  const [result,setResult]=useState<KnowledgeResult|null>(null);
-  const [comparison,setComparison]=useState<KnowledgeComparison|null>(null);
-  const [selected,setSelected]=useState<string[]>([]);
-  const [error,setError]=useState<string|null>(null);
-  const [busy,setBusy]=useState(false);
-  const [question,setQuestion]=useState("");
-  const [answer,setAnswer]=useState<KnowledgeAnswer|null>(null);
-  const [backends,setBackends]=useState<readonly BackendStatus[]>([]);
-  const [backendId,setBackendId]=useState("");
-  const [consent,setConsent]=useState(false);
-  const [asking,setAsking]=useState(false);
-  const activeQuestion=useRef<string|null>(null);
-  const request=useRef(0);
-  const invalidateScope = () => {
-    request.current += 1;
-    setConsent(false);
-    setResult(null);
-    setComparison(null);
-    setAnswer(null);
-    setError(null);
-  };
-  useEffect(()=>{
-    let mounted=true;
-    void window.lirovo.doctor().then(response=>{if(mounted&&response.ok)setBackends((response.value as DoctorReport).backends);}).catch(()=>{});
-    return ()=>{mounted=false;request.current+=1;if(activeQuestion.current!==null)void window.lirovo.cancelKnowledge({requestId:activeQuestion.current}).catch(()=>{});};
-  },[]);
-  const ask=async()=>{
-    if(!question.trim()||!backendId||!consent||busy)return;
-    const id=++request.current;const requestId=crypto.randomUUID();
-    activeQuestion.current=requestId;setBusy(true);setAsking(true);setError(null);setAnswer(null);
-    try{
-      const response=await window.lirovo.askKnowledge({question,query:query||undefined,runIds:selected,approvedOnly:approved,backendId,consent:true,requestId});
-      if(id!==request.current)return;
-      if(response.ok)setAnswer(response.value);else setError(response.error.message);
-    }catch{if(id===request.current)setError("The answer could not be completed. No partial answer was accepted.");}
-    finally{if(id===request.current){setBusy(false);setAsking(false);setConsent(false);activeQuestion.current=null;}}
-  };
-  const stop=async()=>{
-    if(activeQuestion.current===null)return;
-    try{const response=await window.lirovo.cancelKnowledge({requestId:activeQuestion.current});if(!response.ok)setError(response.error.message);}
-    catch{setError("Could not confirm cancellation. Please wait for the request to finish.");}
-  };
-  const search=async()=>{
-    if(busy)return;
-    const id=++request.current;setBusy(true);setError(null);setComparison(null);setAnswer(null);
-    try {
-      const answer=await window.lirovo.searchKnowledge({query,approvedOnly:approved,runIds:selected});
-      if(id!==request.current)return;
-      if(answer.ok)setResult(answer.value);else setError(answer.error.message);
-    } catch {if(id===request.current)setError("Search could not be loaded. Try again.");}
-    finally{if(id===request.current)setBusy(false);}
-  };
-  const compare=async()=>{
-    if(busy)return;
-    const id=++request.current;setBusy(true);setError(null);setResult(null);setAnswer(null);
-    try{
-      const answer=await window.lirovo.compareKnowledge(selected, approved);
-      if(id!==request.current)return;
-      if(answer.ok)setComparison(answer.value);else setError(answer.error.message);
-    }catch{if(id===request.current)setError("Comparison could not be loaded. Try again.");}
-    finally{if(id===request.current)setBusy(false);}
-  };
-  const card=(hit:KnowledgeHit)=> <article key={hit.observationId} className="rounded-xl border border-hairline bg-surface/40 p-4">
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink-subtle"><span>{hit.fieldPath.replace(/_/g," ")}</span><span>{hit.corrected?"Edited · ":""}{hit.decision==="approved"?"Reviewed":"Not reviewed"}</span></div>
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">{hit.text}</p>
-    <button type="button" className="mt-4 flex items-center gap-2 text-xs text-ink-secondary hover:text-ink" onClick={()=>onOpen(hit.runId,hit.evidence[0]?.tStart)}><ArrowUpRight className="size-3.5"/>{hit.title}</button>
-    <div className="mt-2 flex flex-wrap gap-2">{hit.evidence.map((e,i)=><button key={`${e.sourceRef}-${i}`} className="rounded-md bg-fill px-2 py-1 font-mono text-xs text-ink-secondary" title={e.quote??e.sourceRef} onClick={()=>onOpen(hit.runId,e.tStart)}>{formatTime(e.tStart)} · {e.modality}</button>)}{hit.evidence.length===0&&<span className="text-xs text-ink-subtle">No linked source moment</span>}</div>
+type SearchScope = { query: string; runId: string; reviewed: boolean };
+type SearchState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; result: KnowledgeResult };
+const PAGE_SIZE = 10;
+
+function Highlight({ text, query }: { text: string; query: string }): JSX.Element {
+  return <>{highlightWords(text, query).map((part, index) => part.match ? <mark key={index}>{part.text}</mark> : part.text)}</>;
+}
+
+const SearchResult = memo(function SearchResult({ hit, query, schema, onOpen }: {
+  hit: KnowledgeHit; query: string; schema: string | undefined;
+  onOpen: (runId: string, time?: number) => void;
+}): JSX.Element {
+  const first = hit.evidence[0];
+  return <article className="knowledge-hit">
+    <div className="knowledge-hit-origin">
+      <span className="knowledge-source-icon"><Film size={15} aria-hidden="true" /></span>
+      <div><span className="knowledge-origin-name">{sourceLabel(hit.sourceUri)}</span>
+        <span className="knowledge-origin-path">{schema ?? "Extraction"} <span aria-hidden="true">/</span> <Highlight text={fieldLabel(hit.fieldPath)} query={query} /></span>
+      </div>
+      {hit.decision === "approved" && <span className="knowledge-reviewed"><Check size={12} aria-hidden="true" />Reviewed</span>}
+    </div>
+    <h2><button type="button" onClick={() => onOpen(hit.runId, first?.tStart)}><Highlight text={hit.title} query={query} /><ArrowUpRight size={15} aria-hidden="true" /></button></h2>
+    <p className="knowledge-hit-text"><Highlight text={hit.text} query={query} /></p>
+    <div className="knowledge-hit-footer">
+      {first && <button className="knowledge-moment" type="button" onClick={() => onOpen(hit.runId, first.tStart)} aria-label={`Open source at ${formatTime(first.tStart)}`}>
+        <span className="knowledge-play" aria-hidden="true">▶</span>{formatTime(first.tStart)}<span>Open source</span>
+      </button>}
+      {hit.corrected && <span>Edited result</span>}
+      {!first && <span>No linked timestamp</span>}
+      {hit.evidence.length > 0 && <details className="knowledge-evidence">
+        <summary>{hit.evidence.length} source {hit.evidence.length === 1 ? "moment" : "moments"}</summary>
+        <div className="knowledge-evidence-list">{hit.evidence.map((evidence, index) => <div key={`${evidence.sourceRef}-${index}`}>
+          <button type="button" onClick={() => onOpen(hit.runId, evidence.tStart)}>{formatTime(evidence.tStart)} <span>· {evidence.modality}</span><ArrowUpRight size={12} aria-hidden="true" /></button>
+          {evidence.quote && <blockquote><Highlight text={evidence.quote} query={query} /></blockquote>}
+        </div>)}</div>
+      </details>}
+    </div>
   </article>;
-  return <section className="mx-auto w-full max-w-6xl px-6 py-8">
-    <div className="mb-8"><p className="mb-2 flex items-center gap-2 text-xs text-ink-subtle"><BookOpen className="size-4"/>Your knowledge workspace</p><h1 className="text-2xl font-medium tracking-tight">Find the idea. Keep the evidence.</h1><p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-secondary">Search saved results across your videos, or compare extractions side by side. Corrections are included; rejected results stay out.</p></div>
-    <form onSubmit={e=>{e.preventDefault();void search();}} className="flex gap-3 rounded-2xl border border-hairline bg-surface p-3"><Search className="my-auto size-5 text-ink-subtle"/><input aria-label="Search knowledge" disabled={busy} className="min-w-0 flex-1 bg-transparent text-sm outline-none" value={query} onChange={e=>{invalidateScope();setQuery(e.target.value);}} placeholder="Search a topic, a product, a claim…"/><button disabled={busy||!query.trim()} className="liq-solid rounded-lg px-4 py-2 text-sm disabled:opacity-40">Search</button></form>
-    <div className="my-4 flex flex-wrap items-center justify-between gap-3 text-xs text-ink-subtle"><span>Keyword search · full saved values · on-device</span><label className="flex gap-2"><input type="checkbox" disabled={busy} checked={approved} onChange={e=>{invalidateScope();setApproved(e.target.checked);}}/>Reviewed results only</label></div>
-    <details className="mb-6 rounded-xl border border-hairline p-4"><summary className="cursor-pointer text-sm text-ink-secondary">Sources · {selected.length===0?"All extractions":`${selected.length} selected`}</summary><div className="mt-4 grid max-h-64 gap-3 overflow-auto sm:grid-cols-2">{runs.filter(r=>r.status==="succeeded").map(run=><label key={run.runId} className="flex items-start gap-2 text-sm text-ink-secondary"><input type="checkbox" checked={selected.includes(run.runId)} onChange={e=>{invalidateScope();setSelected(s=>e.target.checked?[...s,run.runId]:s.filter(id=>id!==run.runId));}} disabled={busy||(!selected.includes(run.runId)&&selected.length>=10)}/><span>{run.title??"Untitled extraction"}<span className="ml-2 text-xs text-ink-subtle">{run.schemaName??"Custom"}</span></span></label>)}</div><div className="mt-4 flex items-center gap-4"><button onClick={()=>void compare()} disabled={busy||selected.length<2} className="flex items-center gap-2 rounded-lg bg-fill px-3 py-2 text-sm disabled:opacity-40"><Columns2 className="size-4"/>Compare selected</button><button disabled={busy} className="text-xs text-ink-subtle" onClick={()=>{invalidateScope();setSelected([]);}}>Clear selection</button></div></details>
-    <details className="mb-6 rounded-2xl border border-hairline bg-surface/40 p-5">
-      <summary className="cursor-pointer text-sm font-medium"><span className="inline-flex items-center gap-2"><Sparkles className="size-4 text-ink-subtle"/>Ask with sources</span></summary>
-      <p className="mt-3 text-xs leading-relaxed text-ink-subtle">Ask a question across the selected extractions. Search terms above refine retrieval; leave them empty to use the question. Keyword retrieval is local. Answer generation uses your chosen provider.</p>
-      <form onSubmit={e=>{e.preventDefault();void ask();}} className="mt-4">
-        <fieldset disabled={busy} className="space-y-4">
-          <textarea aria-label="Question for your knowledge" value={question} onChange={e=>{setQuestion(e.target.value);setConsent(false);}} placeholder="What do these sources say about…?" rows={2} className="w-full resize-y rounded-xl border border-hairline bg-transparent px-4 py-3 text-sm leading-relaxed outline-none focus:border-ink-subtle"/>
-          <div className="flex flex-wrap items-center gap-3"><label htmlFor="knowledge-provider" className="text-xs text-ink-subtle">Answer with</label><select id="knowledge-provider" value={backendId} onChange={e=>{setBackendId(e.target.value);setConsent(false);}} className="min-w-0 rounded-lg border border-hairline bg-surface px-3 py-2 text-xs text-ink"><option value="">Choose a provider…</option>{backends.filter(b=>b.available).map(b=><option key={b.id} value={b.id}>{b.id}{b.version?` · ${b.version}`:""}</option>)}</select>{backends.every(b=>!b.available)&&<span className="text-xs text-ink-subtle">Configure an available provider in Settings.</span>}</div>
-          <label className="flex items-start gap-2 text-xs leading-relaxed text-ink-secondary"><input type="checkbox" className="mt-0.5" disabled={!backendId} checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>Allow this question and complete retrieved values, quotes and source metadata to be sent to <span className="text-ink">{backendId||"the chosen provider"}</span>. Depending on its configuration, processing may leave this device and use quota. No automatic provider fallback.</span></label>
-          <button type="submit" disabled={!consent||!backendId||!question.trim()} className="liq-solid rounded-lg px-4 py-2 text-sm disabled:opacity-40">Ask with sources</button>
-        </fieldset>
+});
+
+export function KnowledgePage({ runs, onOpen }: { runs: readonly RunSummary[]; onOpen: (runId: string, time?: number) => void }): JSX.Element {
+  const [draft, setDraft] = useState("");
+  const [submitted, setSubmitted] = useState<SearchScope | null>(null);
+  const [reviewed, setReviewed] = useState(false);
+  const [runId, setRunId] = useState("");
+  const [state, setState] = useState<SearchState>({ status: "loading" });
+  const [page, setPage] = useState(1);
+  const input = useRef<HTMLInputElement>(null);
+  const availableRuns = runs.filter(run => run.status === "succeeded");
+  const isHome = submitted === null;
+
+  useEffect(() => {
+    if (submitted === null) return;
+    let active = true;
+    void window.lirovo.searchKnowledge({ query: submitted.query, runIds: submitted.runId ? [submitted.runId] : [], approvedOnly: submitted.reviewed })
+      .then(response => {
+        if (active) setState(response.ok ? { status: "ready", result: response.value } : { status: "error", message: response.error.message });
+      }).catch(() => { if (active) setState({ status: "error", message: "Your library could not be searched. Please try again." }); });
+    return () => { active = false; };
+  }, [submitted]);
+
+  const requestSearch = (scope: SearchScope): void => {
+    setState({ status: "loading" });
+    setPage(1);
+    setSubmitted({ ...scope });
+  };
+  const search = (query = draft, source = runId): void => {
+    if (!query.trim()) { input.current?.focus(); return; }
+    setDraft(query); setRunId(source);
+    requestSearch({ query: query.trim(), runId: source, reviewed });
+  };
+  const changeFilters = (nextReviewed: boolean, nextRun: string): void => {
+    if (nextReviewed === reviewed && nextRun === runId) return;
+    setReviewed(nextReviewed); setRunId(nextRun);
+    if (submitted) {
+      requestSearch({ ...submitted, reviewed: nextReviewed, runId: nextRun });
+    }
+  };
+  const home = (): void => {
+    setSubmitted(null); setDraft(""); setReviewed(false); setRunId(""); input.current?.focus();
+  };
+  const result = state.status === "ready" ? state.result : null;
+  const pages = Math.ceil((result?.hits.length ?? 0) / PAGE_SIZE);
+  const statusText = isHome ? "" : state.status === "loading" ? "Searching your library…" : state.status === "error" ? "Search couldn’t finish." :
+    `${state.result.total} ${state.result.total === 1 ? "result" : "results"} · ${state.result.runCount} ${state.result.runCount === 1 ? "extraction" : "extractions"}`;
+  const changePage = (nextPage: number): void => {
+    setPage(nextPage);
+    input.current?.focus();
+    input.current?.scrollIntoView({ block: "center" });
+  };
+
+  return <section className={`knowledge-search-page ${isHome ? "is-home" : "has-results"}`} aria-label="Knowledge search">
+    <header className="knowledge-search-header">
+      {!isHome && <button type="button" className="knowledge-back" onClick={home} aria-label="Back to knowledge search"><ArrowLeft size={17} /></button>}
+      <div className="knowledge-wordmark"><LirovoMark className="knowledge-mark" /><span>Knowledge</span></div>
+      {isHome ? <div className="knowledge-intro"><h1>Find it in your videos.</h1><p>Your extracted knowledge, one search away.</p></div> : <h1 className="sr-only">Search your knowledge</h1>}
+      <form role="search" aria-label="Search extracted knowledge" className="knowledge-search-form" onSubmit={event => { event.preventDefault(); search(); }}>
+        <Search size={20} className="knowledge-search-icon" aria-hidden="true" />
+        <input ref={input} type="search" aria-label="Search knowledge" placeholder="Search a topic, a name, an idea…" value={draft} onChange={event => setDraft(event.target.value)} autoComplete="off" spellCheck={false} />
+        {draft && <button type="button" className="knowledge-clear" onClick={() => { setDraft(""); input.current?.focus(); }} aria-label="Clear search"><X size={16} /></button>}
+        <button type="submit" className="knowledge-submit" disabled={!draft.trim()} aria-label="Search"><ArrowRight size={19} /></button>
       </form>
-    </details>
-    {error!==null&&<p role="alert" className="mb-4 rounded-lg border border-danger-text/30 p-4 text-sm text-danger-text">{error}</p>}
-    {busy&&<div className="flex items-center justify-between gap-3 py-8"><p role="status" className={`text-sm text-ink-subtle ${asking?"motion-safe:animate-pulse":""}`}>{asking?"Connecting the evidence into a cited answer…":"Looking through your saved knowledge…"}</p>{asking&&<button type="button" onClick={()=>void stop()} className="flex items-center gap-2 rounded-lg border border-hairline px-3 py-2 text-xs"><Square className="size-3"/>Stop</button>}</div>}
-    {!busy&&answer!==null&&<section className="mb-8 rounded-2xl border border-hairline bg-surface/40 p-5 sm:p-7">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-base font-medium text-ink"><Sparkles className="size-4 text-ink-subtle"/>Answer with sources</h2><span className="text-xs text-ink-subtle">{answer.model??"No model call"}{answer.model?` · ${answer.backendId}`:""}</span></div>
-      <p className="mb-5 whitespace-pre-wrap text-xs text-ink-subtle">{answer.question}</p>
-      {answer.status==="insufficient-evidence"?<p className="text-sm leading-relaxed text-ink-secondary">The retrieved evidence is insufficient to answer this question. Try more specific keywords, include other sources, or review the saved results.</p>:<div className="space-y-5">{answer.claims.map((claim,i)=><div key={i}><p className="whitespace-pre-wrap break-words text-sm leading-7 text-ink">{claim.text}</p><div className="mt-2 flex flex-wrap gap-2">{claim.citationIds.map(id=>{const citation=answer.citations.find(c=>c.id===id);return citation?<button key={id} type="button" title={citation.hit.title} onClick={()=>onOpen(citation.hit.runId,citation.hit.evidence[0]?.tStart)} className="rounded-md bg-fill px-2 py-1 text-xs text-ink-secondary">{id} · {formatTime(citation.hit.evidence[0]?.tStart??0)}</button>:null;})}</div></div>)}</div>}
-      <details className="mt-6 border-t border-hairline pt-4 text-xs text-ink-subtle"><summary className="cursor-pointer">How to read this answer · limits and {answer.citations.length} retrieved sources</summary><ul className="mt-3 list-disc space-y-2 pl-4">{answer.limitations.map(note=><li key={note}>{note}</li>)}</ul><div className="mt-5 grid gap-3 lg:grid-cols-2">{answer.citations.map(c=><div key={c.id}><p className="mb-2 font-mono text-xs">{c.id}</p>{card(c.hit)}</div>)}</div></details>
-    </section>}
-    {!busy&&result!==null&&<><p role="status" className="mb-4 text-xs text-ink-subtle">{result.total===0?"No matches. Try a shorter topic or another term.":`${result.total} matches across ${result.runCount} extractions${result.total>result.hits.length?` · first ${result.hits.length} shown`:""}`}</p><div className="grid gap-3 lg:grid-cols-2">{result.hits.map(card)}</div></>}
-    {!busy&&comparison!==null&&<><p className="mb-5 text-xs leading-relaxed text-ink-subtle">{comparison.note}</p>{comparison.fields.length===0&&<p className="py-8 text-sm text-ink-subtle">These extractions have no available results to compare.</p>}{comparison.fields.map(group=><section key={group.field} className="mb-7"><h2 className="mb-3 text-sm font-medium">{group.field.replace(/_/g," ")}</h2><div className="grid gap-3 lg:grid-cols-2">{group.entries.map(card)}</div></section>)}</>}
-    {!busy&&result===null&&comparison===null&&answer===null&&<div className="py-16 text-center"><BookOpen className="mx-auto mb-4 size-8 text-ink-tertiary"/><h2 className="text-lg">Your videos become useful together.</h2><p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-subtle">Try a subject from a completed extraction, or select two sources to see their results together.</p></div>}
+      <div className="knowledge-search-filters">
+        <div className="knowledge-filter-tabs" role="group" aria-label="Review filter">
+          <button type="button" aria-pressed={!reviewed} onClick={() => changeFilters(false, runId)}>All results</button>
+          <button type="button" aria-pressed={reviewed} onClick={() => changeFilters(true, runId)}><Check size={13} aria-hidden="true" />Reviewed</button>
+        </div>
+        <label className="knowledge-source-filter"><span className="sr-only">Filter by extraction</span><select value={runId} onChange={event => changeFilters(reviewed, event.target.value)}>
+          <option value="">All extractions</option>{availableRuns.map(run => <option value={run.runId} key={run.runId}>{run.title ?? "Untitled extraction"}</option>)}
+        </select></label>
+      </div>
+    </header>
+    <p role="status" aria-atomic="true" className={isHome || state.status === "error" ? "sr-only" : "knowledge-result-count"}>
+      {statusText}{!isHome && state.status === "ready" && <span>Keyword search · on-device</span>}
+    </p>
+    {isHome ? <div className="knowledge-home-content">
+      {availableRuns.length > 0 ? <><p className="knowledge-section-label">Explore your library</p><div className="knowledge-recent-sources">
+        {availableRuns.filter((_, index) => index < 3).map(run => <button type="button" key={run.runId} onClick={() => search(run.title ?? "", run.runId)} disabled={!run.title}>
+          <Film size={15} aria-hidden="true" /><span>{run.title ?? "Untitled extraction"}<small>{run.schemaName ?? "Extraction"}</small></span><ArrowUpRight size={14} aria-hidden="true" />
+        </button>)}
+      </div></> : <div className="knowledge-empty-library"><Film size={22} aria-hidden="true" /><h2>Your knowledge starts with a video.</h2><p>Complete an extraction, then find its saved results here.</p></div>}
+      <p className="knowledge-privacy"><ShieldCheck size={13} aria-hidden="true" />On-device search. No AI generation.</p>
+      <p className="knowledge-scope-note">Searches saved extraction results and their linked quotes.</p>
+    </div> : <div className="knowledge-results-region" aria-busy={state.status === "loading"}>
+      {state.status === "loading" && <div className="knowledge-skeleton" aria-hidden="true">{[0, 1, 2].map(i => <div key={i}><span /><span /><span /></div>)}</div>}
+      {state.status === "error" && <div className="knowledge-empty"><Search size={26} aria-hidden="true" /><h2>Search couldn’t finish.</h2><p role="alert">{state.message}</p><button type="button" onClick={() => requestSearch(submitted)}>Try again<ArrowRight size={14} /></button></div>}
+      {state.status === "ready" && <>
+        {draft.trim() !== submitted.query && <p className="knowledge-query-note">Showing results for <strong>{submitted.query}</strong>. {draft.trim() ? "Press Enter to search your new text." : "Type a new term to search again."}</p>}
+        {result?.total === 0 ? <div className="knowledge-empty"><Search size={28} aria-hidden="true" /><h2>No results for “{submitted.query}”</h2><p>Try a shorter term or a different spelling.{reviewed || runId ? " You can also broaden your filters." : ""}</p>
+          {(reviewed || runId) && <button type="button" onClick={() => changeFilters(false, "")}>Search all extractions<ArrowRight size={14} /></button>}
+        </div> : <>
+          <div className="knowledge-results-list">{result?.hits.filter((_, index) => index >= (page - 1) * PAGE_SIZE && index < page * PAGE_SIZE).map(hit => <SearchResult key={hit.observationId} hit={hit} query={submitted.query} schema={runs.find(run => run.runId === hit.runId)?.schemaName ?? undefined} onOpen={onOpen} />)}</div>
+          {result && result.total > result.hits.length && <p className="knowledge-query-note">Showing the first {result.hits.length} ranked results. Narrow your search or choose an extraction to find more.</p>}
+          {pages > 1 && <nav className="knowledge-pagination" aria-label="Search result pages">
+            <button type="button" disabled={page === 1} onClick={() => changePage(page - 1)}><ChevronLeft size={16} />Previous</button><span>Page {page} of {pages}</span>
+            <button type="button" disabled={page === pages} onClick={() => changePage(page + 1)}>Next<ChevronRight size={16} /></button>
+          </nav>}
+          <p className="knowledge-results-note">Results come from your saved extractions. Linked sources show context, not a fact-check.</p>
+        </>}
+      </>}
+    </div>}
   </section>;
 }
