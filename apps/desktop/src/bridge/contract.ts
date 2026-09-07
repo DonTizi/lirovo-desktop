@@ -34,7 +34,26 @@ export interface ExtractRequest {
   readonly schemaRevisionId?: string | null | undefined;
   /** Display name captured with the requested schema, never sent as a prompt. */
   readonly schemaName?: string | null | undefined;
+  readonly language?: string | undefined;
+  readonly allowRemoteAsr?: boolean | undefined;
 }
+
+export interface QueueItem {
+  readonly schemaKey?: string;
+  readonly runId: string;
+  readonly source: string;
+  readonly schemaName: string | null;
+  readonly status: "queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly error: string | null;
+}
+
+export type { ReviewMutation, ReviewSnapshot, ReviewHistoryEntry } from "@lirovo/node-runtime";
+export type { KnowledgeQuery, KnowledgeResult, KnowledgeComparison, KnowledgeHit } from "@lirovo/node-runtime";
+export type { ExportOptions, ExportOutcome } from "@lirovo/node-runtime";
+export type { AskKnowledgeRequest, KnowledgeAnswer } from "@lirovo/node-runtime";
+export type { LibraryTransferResult, ArchivedRun } from "@lirovo/node-runtime";
 
 /**
  * Passed through from where it is computed. Two copies of a shape are two
@@ -117,6 +136,8 @@ export interface ValueRow {
   readonly fieldPath: string;
   readonly value: string;
   readonly reviewPriority: number;
+  readonly originalValue?: unknown;
+  readonly review?: import("@lirovo/node-runtime").ReviewSnapshot;
   readonly evidence: readonly {
     readonly sourceRef: string;
     readonly modality: string;
@@ -165,6 +186,12 @@ export interface RunDetail {
  * pay to parse fifty knowledge graphs.
  */
 export interface RunArtifacts {
+  /** Preserved anomaly candidates are never treated as trusted transcripts. */
+  readonly qualityReports?: readonly {
+    readonly createdAt: string;
+    readonly issues: readonly string[];
+    readonly text: string;
+  }[];
   /** `lirovo-media://` for the normalized stream; null when normalize never ran. */
   readonly videoUrl: string | null;
   /** Normalization keeps sound separately from the silent video stream. */

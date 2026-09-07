@@ -1,4 +1,4 @@
-import { compileSchema, type FieldSpec } from "@lirovo/core";
+import { compileSchema, fieldsFingerprint, SCHEMA_PRESETS, type FieldSpec } from "@lirovo/core";
 import { useState } from "react";
 import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import { FieldRows } from "./FieldRows";
@@ -29,6 +29,9 @@ export function SchemaPicker({
   onManage: () => void;
 }): JSX.Element {
   const [editing, setEditing] = useState(false);
+  const researchPreset = SCHEMA_PRESETS.some((preset) =>
+    (preset.id === "technical-talk" || preset.id === "benchmark-comparison") && fieldsFingerprint(preset.fields) === fieldsFingerprint(fields),
+  );
   return (
     <div className="bg-surface-subtle mx-3 rounded-t-2xl px-2 py-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -53,6 +56,7 @@ export function SchemaPicker({
           />
         </button>
       </div>
+      {researchPreset && <p className="px-2 pb-2 pt-1 text-xs leading-relaxed text-ink-subtle">Check a claim against its source, accept it, then export your findings. Matching benchmark names do not guarantee comparable results.</p>}
       {editing && (
         <div
           id="extraction-fields"

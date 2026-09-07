@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,6 +27,14 @@ import {
   runIdSchema,
   saveSchemaRequestSchema,
   schemaIdSchema,
+  reviewMutationSchema,
+  reviewHistorySchema,
+  knowledgeQuerySchema,
+  knowledgeComparisonSchema,
+  exportRunSchema,
+  askKnowledgeSchema,
+  cancelKnowledgeSchema,
+  archiveRunSchema,
 } from "./ipc.js";
 
 import { installMediaProtocol, registerMediaScheme } from "./media-protocol.js";
@@ -39,8 +48,17 @@ import {
   type UpdateChannel,
 } from "./updater.js";
 import type { EngineMessage } from "./engine-protocol.js";
+import { saveExportFile } from "./export-file.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const requestedLibraryRoot = process.env["LIROVO_DATA_DIR"] ?? path.join(app.getPath("home"), "Library", "Application Support", "Lirovo");
+mkdirSync(requestedLibraryRoot, { recursive: true });
+const libraryRoot = realpathSync(requestedLibraryRoot);
+process.env["LIROVO_DATA_DIR"] = libraryRoot;
+const profile = path.join(libraryRoot, "desktop");
+mkdirSync(profile, { recursive: true });
+app.setPath("userData", profile);
+if (!app.requestSingleInstanceLock()) app.exit(0);
 
 // Before `whenReady`, which is the only moment a privileged scheme may be
 // declared. Everything else about the protocol is set up after.
@@ -49,6 +67,11 @@ const DEV_URL = process.env["VITE_DEV_SERVER_URL"];
 
 let window: BrowserWindow | null = null;
 let engine: UtilityProcess | null = null;
+app.on("second-instance", () => {
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+});
 const pending = new Map<
   string,
   { resolve: (v: unknown) => void; reject: (e: Error) => void }
@@ -179,7 +202,7 @@ const createWindow = (): void => {
  * devtools context reaching them would be reaching ffmpeg.
  */
 const fromMainFrame = (event: Electron.IpcMainInvokeEvent): boolean =>
-  event.senderFrame !== null && event.senderFrame.parent === null;
+  event.sender === window?.webContents && event.senderFrame !== null && event.senderFrame === event.sender.mainFrame;
 
 const guard =
   <T>(handler: (payload: unknown) => Promise<T>) =>
@@ -212,6 +235,52 @@ let channelAtBoot: UpdateChannel = "latest";
 
 app.whenReady().then(() => {
   installMediaProtocol();
+  ipcMain.handle(CHANNELS.archiveRun,guard(payload=>ask({type:"archiveRun",...archiveRunSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.archivedRuns,guard(()=>ask({type:"archivedRuns"})));
+  ipcMain.handle(CHANNELS.backupLibrary,guard(async()=>{
+    const selected = await dialog.showOpenDialog({title:"Choose where to create a new Lirovo backup",properties:["openDirectory","createDirectory"]});
+    if(selected.canceled || !selected.filePaths[0]) return {cancelled:true};
+    const parent = realpathSync(selected.filePaths[0]);
+    const destination = path.join(parent,`Lirovo-backup-${new Date().toISOString().replace(/[:.]/g,"-")}-${randomUUID()}`);
+    const transfer = await ask({type:"backupLibrary",destination});
+    return {cancelled:false,transfer};
+  }));
+  ipcMain.handle(CHANNELS.restoreLibrary,guard(async()=>{
+    const source = await dialog.showOpenDialog({title:"Choose a Lirovo backup folder",properties:["openDirectory"]});
+    if(source.canceled || !source.filePaths[0]) return {cancelled:true};
+    const selected = await dialog.showOpenDialog({title:"Restore as a new library — your current library will not change",properties:["openDirectory","createDirectory"]});
+    if(selected.canceled || !selected.filePaths[0]) return {cancelled:true};
+    const parent = realpathSync(selected.filePaths[0]);
+    const destination = path.join(parent,`Lirovo-restored-${new Date().toISOString().replace(/[:.]/g,"-")}-${randomUUID()}`);
+    const transfer = await ask({type:"restoreLibrary",backupDirectory:realpathSync(source.filePaths[0]),destination});
+    return {cancelled:false,transfer};
+  }));
+  ipcMain.handle(CHANNELS.askKnowledge,guard(payload=>ask({type:"askKnowledge",input:askKnowledgeSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.cancelKnowledge,guard(payload=>ask({type:"cancelKnowledge",...cancelKnowledgeSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.exportRun, guard(async(payload)=>{
+    const request=exportRunSchema.parse(payload);
+    if (request.options.format === "folder") {
+      const selected = await dialog.showOpenDialog({ title: "Choose where to save the complete extraction folder", properties: ["openDirectory", "createDirectory"] });
+      if (selected.canceled || !selected.filePaths[0]) return { cancelled: true };
+      const parent = realpathSync(selected.filePaths[0]);
+      const destination = path.join(parent, `Lirovo-extraction-${randomUUID()}`);
+      const exported = await ask<import("@lirovo/node-runtime").RunFolderExport>({ type: "exportRunFolder", runId: request.runId, destination, protectedRoots: [libraryRoot, app.getPath("userData"), realpathSync(app.getAppPath())] });
+      return { cancelled: false, ...exported };
+    }
+    const artifact=await ask<{content:string;mime:string;extension:string;suggestedName:string}>({type:"exportRun",...request});
+    const extension=request.options.format==="markdown"?"md":request.options.format;
+    const selected=await dialog.showSaveDialog({title:"Export extraction",defaultPath:path.basename(artifact.suggestedName),filters:[{name:request.options.format.toUpperCase(),extensions:[extension]}]});
+    if(selected.canceled||!selected.filePath)return {cancelled:true};
+    await saveExportFile(selected.filePath, artifact.content, [libraryRoot, app.getPath("userData"), app.getAppPath()]);
+    return {cancelled:false};
+  }));
+  ipcMain.handle(CHANNELS.searchKnowledge, guard((payload) => ask({type: "searchKnowledge", input: knowledgeQuerySchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.compareKnowledge, guard((payload) => ask({type: "compareKnowledge", ...knowledgeComparisonSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.listQueue, guard(() => ask({type: "listQueue"})));
+  ipcMain.handle(CHANNELS.resumeRun, guard((payload) => ask({type: "resumeRun", ...runIdSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.cancelQueuedRun, guard((payload) => ask({type: "cancelQueuedRun", ...runIdSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.reviewValue, guard((payload) => ask({type: "reviewValue", input: reviewMutationSchema.parse(payload)})));
+  ipcMain.handle(CHANNELS.reviewHistory, guard((payload) => ask({type: "reviewHistory", ...reviewHistorySchema.parse(payload)})));
 
   void ask<{
     updateChannel: UpdateChannel;
@@ -420,7 +489,7 @@ app.whenReady().then(() => {
             ? "Delete everything Lirovo has stored?"
             : "Delete every extraction?",
           detail: everything
-            ? "The database, every extraction, the downloaded speech model and any binary this app installed. Schemas go too. This cannot be undone."
+            ? "Every extraction, schema, setting, downloaded speech model and binary this app installed will be removed. An empty metadata database is retained for safe process coordination; application cache files are not included. This is not secure erasure and cannot be undone without a backup."
             : "Every run and its artifacts — frames, transcripts, graphs. Schemas, settings and the downloaded model are kept. This cannot be undone.",
         },
       );
@@ -514,6 +583,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  engine?.kill();
   if (process.platform !== "darwin") app.quit();
 });
+app.on("will-quit", () => { engine?.kill(); });

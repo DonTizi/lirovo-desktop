@@ -900,10 +900,10 @@ export function SettingsPage({
           </div>
           <div className="flex flex-wrap items-center gap-4 px-5 py-4">
             <div className="min-w-0 flex-1">
-              <p className="text-ink-strong text-[13px] font-medium">Remove everything</p>
+              <p className="text-ink-strong text-[13px] font-medium">Reset local library</p>
               <p className="text-ink-subtle mt-0.5 text-xs">
-                The whole folder: database, extractions, schemas, the speech model and any tool this app installed.
-                That is what uninstall means for an app whose entire state is one directory.
+                Delete extractions, schemas, settings, downloaded models and installed tools.
+                An empty database stays in place for safe coordination. Unrelated files are kept.
               </p>
             </div>
             <button
@@ -911,7 +911,7 @@ export function SettingsPage({
               className="border-danger-text/30 bg-danger-tint/40 text-danger-text hover:bg-danger-tint flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors"
             >
               <Trash2 className="size-3.5" />
-              Remove everything
+              Reset library
             </button>
           </div>
         </div>

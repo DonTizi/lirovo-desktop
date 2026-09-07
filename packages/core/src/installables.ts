@@ -39,9 +39,8 @@ export interface Installable {
 /**
  * The default speech model.
  *
- * base.en at q5_1 is 60MB and transcribes an hour of English talk in a couple
- * of minutes on Apple Silicon. The multilingual and large variants are offered
- * too, because a French keynote is not an edge case.
+ * Multilingual base at q5_1 is about 60 MB. English-only weights remain an
+ * explicit option, not the default for an app that accepts any source language.
  */
 export const WHISPER_MODELS: readonly {
   readonly id: string;
@@ -77,7 +76,7 @@ export const WHISPER_MODELS: readonly {
   },
 ];
 
-export const DEFAULT_WHISPER_MODEL_ID = "base.en";
+export const DEFAULT_WHISPER_MODEL_ID = "base";
 
 const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 

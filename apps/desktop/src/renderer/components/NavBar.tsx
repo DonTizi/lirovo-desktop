@@ -12,6 +12,7 @@ import {
   Folder,
   FolderOpen,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { RunSummary } from "../../bridge/contract.js";
@@ -93,6 +94,7 @@ export function NavBar({
   const sections = [
     { id: "overview", label: "New extraction", icon: Plus },
     { id: "library", label: "Library", icon: Library },
+    { id: "knowledge", label: "Knowledge", icon: BookOpen },
     { id: "schemas", label: "Schemas", icon: ListFilter },
   ];
   return (

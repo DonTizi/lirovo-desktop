@@ -9,6 +9,20 @@
  * names belong here, where anything can import them for free.
  */
 export const CHANNELS = {
+  backupLibrary: "lirovo:backup-library",
+  restoreLibrary: "lirovo:restore-library",
+  archiveRun: "lirovo:archive-run",
+  archivedRuns: "lirovo:archived-runs",
+  askKnowledge: "lirovo:ask-knowledge",
+  cancelKnowledge: "lirovo:cancel-knowledge",
+  exportRun: "lirovo:export-run",
+  searchKnowledge: "lirovo:search-knowledge",
+  compareKnowledge: "lirovo:compare-knowledge",
+  listQueue: "lirovo:list-queue",
+  resumeRun: "lirovo:resume-run",
+  cancelQueuedRun: "lirovo:cancel-queued-run",
+  reviewValue: "lirovo:review-value",
+  reviewHistory: "lirovo:review-history",
   doctor: "lirovo:doctor",
   extract: "lirovo:extract",
   cancel: "lirovo:cancel",

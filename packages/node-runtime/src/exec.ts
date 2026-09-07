@@ -1,8 +1,26 @@
 import { spawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import type { Exec, ExecOptions, ExecResult } from "@lirovo/contracts";
 import { LirovoError } from "@lirovo/contracts";
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+
+export interface ExecTracking {
+  /** Commit the process-group journal synchronously. Throw to refuse startup. */
+  readonly onSpawn: (pid: number) => void;
+}
+
+// fd 3 is exclusively the startup gate: the target's entire stdin is untouched.
+// Arguments are positional parameters, never source text interpreted by a shell.
+const START_GATE = 'IFS= read -r lirovo_token <&3 || exit 125; [ "$lirovo_token" = "lirovo-start" ] || exit 125; command -v "$1" >/dev/null 2>&1 || exit 127; exec "$@" 3<&-';
+
+/** Extraction-only adapter: no target code runs until its group is journaled. */
+export const createTrackedExec = (tracking: ExecTracking): Exec => {
+  if (process.platform === "win32") {
+    return async () => { throw new LirovoError("DEPENDENCY_MISSING", "Safe extraction process tracking requires macOS or Linux."); };
+  }
+  return (bin, args, opts) => execute(bin, args, opts, tracking);
+};
 
 /**
  * Spawn a child process.
@@ -16,14 +34,21 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
  *   states what the child may see, so an agent CLI cannot silently inherit
  *   `ANTHROPIC_API_KEY`, `AWS_*` or anything else that happens to be exported.
  */
-export const realExec: Exec = (bin, args, opts: ExecOptions = {}): Promise<ExecResult> =>
+export const realExec: Exec = (bin, args, opts) => execute(bin, args, opts);
+
+const execute = (bin: string, args: readonly string[], opts: ExecOptions = {}, tracking?: ExecTracking): Promise<ExecResult> =>
   new Promise((resolve, reject) => {
-    const child = spawn(bin, [...args], {
+    if (opts.signal?.aborted) {
+      reject(new LirovoError("CANCELLED", `${bin} cancelled`, { detail: { bin } }));
+      return;
+    }
+    const child = spawn(tracking ? "/bin/sh" : bin, tracking ? ["-c", START_GATE, "lirovo-exec", bin, ...args] : [...args], {
       cwd: opts.cwd,
       env: opts.env as NodeJS.ProcessEnv | undefined,
       detached: true,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", tracking ? "pipe" : "ignore"],
     });
+    const gate = tracking ? child.stdio[3] as Writable : null;
 
     let stdout = "";
     let stderr = "";
@@ -72,16 +97,42 @@ export const realExec: Exec = (bin, args, opts: ExecOptions = {}): Promise<ExecR
     };
     opts.signal?.addEventListener("abort", onAbort);
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
     });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
     });
 
     child.on("error", (error: NodeJS.ErrnoException) => {
       const code = error.code === "ENOENT" ? "DEPENDENCY_MISSING" : "INTERNAL";
       finish(() => reject(new LirovoError(code, `${bin}: ${error.message}`, { detail: { bin } })));
+    });
+
+    // Early child exit may close these pipes before their pending writes drain.
+    child.stdin?.on("error", () => {});
+    gate?.on("error", (error) => {
+      killGroup("SIGKILL");
+      finish(() => reject(new LirovoError("INTERNAL", `Could not release the extraction startup gate: ${String(error)}`)));
+    });
+    if (tracking) child.once("spawn", () => {
+      if (settled || opts.signal?.aborted) { gate?.end(); killGroup("SIGKILL"); return; }
+      try {
+        if (child.pid === undefined) throw new Error("The subprocess has no process identifier.");
+        const receipt: unknown = tracking.onSpawn(child.pid);
+        if (receipt !== null && typeof receipt === "object" && "then" in receipt) {
+          void Promise.resolve(receipt).catch(() => {});
+          throw new Error("The subprocess journal must commit synchronously before execution.");
+        }
+        if (opts.signal?.aborted) { onAbort(); return; }
+        gate?.end("lirovo-start\n");
+      } catch (error) {
+        gate?.end();
+        killGroup("SIGKILL");
+        finish(() => reject(error));
+      }
     });
 
     child.on("close", (exitCode) => {
@@ -91,13 +142,13 @@ export const realExec: Exec = (bin, args, opts: ExecOptions = {}): Promise<ExecR
           return;
         }
         reject(
-          new LirovoError("INTERNAL", `${bin} exited ${exitCode}: ${stderr.trim() || stdout.trim()}`, {
+          new LirovoError(tracking && exitCode === 127 ? "DEPENDENCY_MISSING" : "INTERNAL", `${bin} exited ${exitCode}: ${stderr.trim() || stdout.trim()}`, {
             detail: { bin, args, exitCode },
           }),
         );
       });
     });
 
-    if (opts.stdin !== undefined) child.stdin.end(opts.stdin);
-    else child.stdin.end();
+    if (opts.stdin !== undefined) child.stdin?.end(opts.stdin);
+    else child.stdin?.end();
   });

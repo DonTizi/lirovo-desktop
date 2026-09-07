@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, rename, rm, stat, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, mkdir, rm, stat, readFile, writeFile } from "node:fs/promises";
+import { renameSync } from "node:fs";
 import path from "node:path";
 import type { ArtifactStore } from "@lirovo/contracts";
 import { LirovoError } from "@lirovo/contracts";
@@ -36,7 +37,7 @@ const dirName = (runId: string): string => {
   return runId;
 };
 
-export const createFsArtifactStore = (root: string): ArtifactStore => {
+export const createFsArtifactStore = (root: string, publish: (write: () => void) => void = (write) => write()): ArtifactStore => {
   const dirFor = (runId: string): string => path.join(root, dirName(runId));
   const full = (runId: string, relPath: string): string => {
     const target = path.resolve(dirFor(runId), relPath);
@@ -53,10 +54,12 @@ export const createFsArtifactStore = (root: string): ArtifactStore => {
 
   const writeAtomic = async (target: string, write: (tmp: string) => Promise<void>): Promise<void> => {
     await mkdir(path.dirname(target), { recursive: true });
-    const tmp = `${target}.${process.pid}.tmp`;
+    const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     try {
       await write(tmp);
-      await rename(tmp, target);
+      // A scoped writer checks its lease and publishes under one SQLite write
+      // lock, with no await gap in which another owner can take the run.
+      publish(() => renameSync(tmp, target));
     } catch (error) {
       await rm(tmp, { force: true });
       if (error instanceof Error && "code" in error && error.code === "ENOSPC") {

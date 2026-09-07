@@ -20,6 +20,7 @@ import { ValueReader } from "./value-reader";
 import { Cue } from "./cue";
 import { displayValue } from "./value-groups";
 import { graphLabel, graphTime } from "./graph-model";
+import { ValueReview, type OnReviewSaved } from "./value-review";
 
 function Empty({ children }: { children: React.ReactNode }): JSX.Element {
   return (
@@ -129,12 +130,17 @@ export function ValuesTab({
   detail,
   values,
   lens,
+  onReviewSaved,
 }: {
   detail: RunDetail;
   values: readonly ValueRow[];
   lens: Lens;
+  onReviewSaved: OnReviewSaved;
 }): JSX.Element {
-  const all = valueColumns(lens);
+  const all: readonly TableColumn<ValueRow>[] = [...valueColumns(lens), {
+    key: "review", label: "Review", cellClass: "min-w-[260px]",
+    cell: (row) => <ValueReview runId={detail.runId} row={row} onSaved={onReviewSaved} />,
+  }];
   const { columns, hidden, onToggle, onShowAll } = useColumns(all);
   const [mode, setMode] = useState<"read" | "table">("read");
 
@@ -142,7 +148,7 @@ export function ValuesTab({
     <section className="min-w-0">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-subtle">
-          Open a source to check the context.
+          {detail.values.filter((row) => row.review?.decision === "approved").length} accepted · {detail.values.filter((row) => row.review?.decision === "rejected").length} rejected · {detail.values.filter((row) => row.review?.decision !== "approved" && row.review?.decision !== "rejected").length} need review
         </p>
         <div className="result-mode" role="group" aria-label="Result display">
           <button
@@ -160,7 +166,7 @@ export function ValuesTab({
         </div>
       </div>
       {mode === "read" ? (
-        <ValueReader values={values} total={detail.values.length} lens={lens} />
+        <ValueReader values={values} total={detail.values.length} lens={lens} runId={detail.runId} onReviewSaved={onReviewSaved} />
       ) : (
         <div className="border-hairline bg-base overflow-hidden rounded-xl border">
           <div className="flex justify-end p-3">

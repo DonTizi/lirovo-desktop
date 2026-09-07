@@ -16,7 +16,25 @@ export const extractRequestSchema = z.object({
   /** Which stored revision this run was asked with, when it came from one. */
   schemaRevisionId: z.string().nullable().optional(),
   schemaName: z.string().nullable().optional(),
+  language: z.string().regex(/^(auto|[a-z]{2,3})$/).optional(),
+  allowRemoteAsr: z.boolean().optional(),
 });
+
+export const reviewMutationSchema = z.object({
+  runId: z.string().min(1),
+  observationId: z.string().min(1),
+  expectedRevision: z.number().int().nonnegative(),
+  action: z.enum(["approve", "reject", "reopen", "correct"]),
+  value: z.unknown().optional(),
+  note: z.string().optional(),
+});
+export const reviewHistorySchema = z.object({runId: z.string().min(1), observationId: z.string().min(1)});
+export const knowledgeQuerySchema = z.object({query: z.string(), runIds: z.array(z.string().min(1)).optional(), approvedOnly: z.boolean().optional()});
+export const knowledgeComparisonSchema = z.object({runIds: z.array(z.string().min(1)).min(2).max(10), approvedOnly: z.boolean().optional()});
+export const askKnowledgeSchema = z.object({question:z.string().trim().min(1),query:z.string().optional(),runIds:z.array(z.string().min(1)).optional(),approvedOnly:z.boolean().optional(),backendId:z.string().min(1),consent:z.literal(true),requestId:z.string().uuid()});
+export const cancelKnowledgeSchema = z.object({requestId:z.string().uuid()});
+export const exportRunSchema = z.object({runId:z.string().min(1),options:z.object({format:z.enum(["json","csv","markdown","folder"]),scope:z.enum(["all","approved"])})})
+  .refine(request => request.options.format !== "folder" || request.options.scope === "all", "Complete folder exports include all stored data.");
 /**
  * The validator and the contract must describe the same request.
  *
@@ -29,6 +47,7 @@ const _schemaMatchesContract: ExtractRequest = {} as z.infer<typeof extractReque
 void _schemaMatchesContract;
 
 export const runIdSchema = z.object({ runId: z.string().min(1) });
+export const archiveRunSchema = z.object({runId:z.string().min(1),archived:z.boolean()});
 
 /** Look at a source without ingesting it, so the field can say what it understood. */
 export const inspectRequestSchema = z.object({ source: z.string().min(1) });

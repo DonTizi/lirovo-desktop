@@ -184,6 +184,8 @@ export interface AsrRequest {
  * instant. Local whisper second. A paid API only if the user opts in.
  */
 export interface AsrStrategy {
+  readonly cacheIdentity?: string;
+  validateTranscript?(transcript: Transcript): void;
   readonly name: string;
   isAvailable(req: AsrRequest): Promise<boolean>;
   transcribe(req: AsrRequest): Promise<Transcript>;

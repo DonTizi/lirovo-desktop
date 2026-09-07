@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import jpeg from "jpeg-js";
 import type { ArtifactStore, DedupFrameEntry, FramesManifest } from "@lirovo/contracts";
@@ -95,9 +95,10 @@ export const dedupFrames = async (input: DedupInput, deps: DedupDeps): Promise<D
     async (entry) =>
       // The raw index is preserved in the deduped filename so an evidence
       // anchor like `frame#000042` means the same frame everywhere.
-      copyFile(
+      deps.store.putFile(
+        input.runId,
+        ARTIFACT_PATHS.dedupFrame(entry.idx),
         deps.store.resolve(input.runId, ARTIFACT_PATHS.rawFrame(entry.idx)),
-        deps.store.resolve(input.runId, ARTIFACT_PATHS.dedupFrame(entry.idx)),
       ),
     8,
   );

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Film } from "lucide-react";
 import type { Stage } from "@lirovo/contracts";
+import type { ReviewSnapshot } from "@lirovo/node-runtime";
 import type {
   RunArtifacts,
   RunDetail,
@@ -13,6 +14,7 @@ import { Skeleton } from "../primitives";
 import { cn } from "../../lib/cn";
 import { formatTime, useLens } from "./lens";
 import { Player } from "./player";
+import { ExportResults } from "./ExportResults";
 import { GraphView } from "./graph-view";
 import { FramesTab, GraphNodes, TranscriptTab, ValuesTab } from "./tabs";
 
@@ -44,17 +46,33 @@ export function RunView({
   detail,
   values,
   live,
+  initialTime = 0,
+  onReviewSaved,
 }: {
   detail: RunDetail;
   values: readonly ValueRow[];
   live: ReadonlyMap<Stage, LiveStage>;
+  initialTime?: number;
+  onReviewSaved?: () => void;
 }): JSX.Element {
+  const [reviews, setReviews] = useState<ReadonlyMap<string, ReviewSnapshot>>(new Map());
+  useEffect(() => { setReviews(new Map()); }, [detail.runId]);
+  const reviewedRow = (row: ValueRow): ValueRow => {
+    const local = reviews.get(row.observationId);
+    if (!local || local.revision <= (row.review?.revision ?? 0)) return row;
+    return { ...row, value: JSON.stringify(local.value), originalValue: local.originalValue, review: local };
+  };
+  const reviewedDetail = { ...detail, values: detail.values.map(reviewedRow) };
+  const saveReview = (id: string, review: ReviewSnapshot) => {
+    setReviews((current) => new Map(current).set(id, review));
+    onReviewSaved?.();
+  };
   const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
   const [pane, setPane] = useState<Pane>("extracted");
   const [artifactError, setArtifactError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const tabId = useId();
-  const lens = useLens();
+  const lens = useLens(initialTime);
   const working = isWorking(detail.status);
 
   useEffect(() => {
@@ -127,6 +145,7 @@ export function RunView({
   const active = available.some((p) => p.key === pane) ? pane : "extracted";
 
   const finished = detail.status === "succeeded";
+  const currentQualityFailure = ["failed", "stopped"].includes(detail.status) && (detail.errorMessage?.includes("asr-quality-") ?? false);
 
   return (
     <div
@@ -146,9 +165,12 @@ export function RunView({
           </p>
           <h1>{detail.title ?? "Untitled extraction"}</h1>
         </div>
-        <span className="result-status">
-          {finished ? "Completed" : detail.status}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {finished && <ExportResults key={detail.runId} runId={detail.runId} />}
+          <span className="result-status">
+            {finished ? "Completed" : detail.status}
+          </span>
+        </div>
       </div>
       {artifactError !== null && (
         <div
@@ -164,6 +186,15 @@ export function RunView({
           </button>
         </div>
       )}
+      {(shown.qualityReports?.length ?? 0) > 0 && <section className="mb-6 rounded-xl border border-warning/30 bg-warning/5 p-5" aria-label="Transcription quality review">
+        <h2 className="text-sm font-medium">{currentQualityFailure ? "The transcript needs a closer look" : "Preserved transcription quality history"}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-secondary">{currentQualityFailure ? "Processing stopped because the transcript may be unreliable. Try a better speech model or check the audio before resuming. " : "An earlier attempt produced a transcript that did not pass the quality checks. "}These candidates are preserved for inspection and were not used as evidence.</p>
+        {shown.qualityReports?.map((report,index)=><details key={`${report.createdAt}-${index}`} className="mt-4 border-t border-hairline pt-3">
+          <summary className="cursor-pointer text-sm text-ink-secondary">Inspect preserved transcript · {new Date(report.createdAt).toLocaleString()}</summary>
+          <ul className="my-3 list-inside list-disc text-xs text-warning-text">{report.issues.map((issue,i)=><li key={i}>{issue}</li>)}</ul>
+          <p className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base/40 p-4 text-sm leading-relaxed text-ink-secondary">{report.text}</p>
+        </details>)}
+      </section>}
       <div
         className={cn(
           "result-layout",
@@ -244,7 +275,7 @@ export function RunView({
                         already explore any available transcript and frames.
                       </p>
                     ) : (
-                      <ValuesTab detail={detail} values={values} lens={lens} />
+                      <ValuesTab detail={reviewedDetail} values={values.map(reviewedRow)} lens={lens} onReviewSaved={saveReview} />
                     ))}
                   {!loading && active === "transcript" && (
                     <TranscriptTab artifacts={shown} lens={lens} />

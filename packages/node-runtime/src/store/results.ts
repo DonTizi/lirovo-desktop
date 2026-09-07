@@ -3,12 +3,14 @@ import type { EvidenceDraft, RunManifest } from "@lirovo/contracts";
 import { makeId } from "@lirovo/contracts";
 import { deriveReviewSignals, leafPaths } from "@lirovo/core";
 import type { Db } from "./db.js";
+import { assertRunOwnership } from "./runs.js";
 
 const newId = (kind: Parameters<typeof makeId>[0]): string => makeId(kind, randomBytes(10));
 const nowS = (): number => Math.floor(Date.now() / 1000);
 
 export interface PersistInput {
   readonly runId: string;
+  readonly owner?: string;
   readonly data: unknown;
   readonly evidenceByField: ReadonlyMap<string, readonly EvidenceDraft[]>;
 }
@@ -63,6 +65,7 @@ export const persistExtraction = (db: Db, input: PersistInput): PersistResult =>
   let evidenceRows = 0;
 
   const write = db.transaction(() => {
+    if (input.owner !== undefined) assertRunOwnership(db, input.runId, input.owner);
     for (const path of paths) {
       const observationId = newId("value");
       insertValue.run(observationId, input.runId, path, JSON.stringify(readPath(path) ?? null), nowS());
@@ -107,12 +110,14 @@ export const persistExtraction = (db: Db, input: PersistInput): PersistResult =>
       );
     }
   });
-  write();
+  write.immediate();
 
   return { values: paths.length, grounded, evidenceRows };
 };
 
-export const persistManifest = (db: Db, manifest: RunManifest): void => {
+export const persistManifest = (db: Db, manifest: RunManifest, owner?: string): void => {
+  db.transaction(() => {
+  if (owner !== undefined) assertRunOwnership(db, manifest.runId, owner);
   db.prepare(
     `INSERT INTO run_manifests
        (run_id, source_sha256, schema_revision_id, schema_json, prompts_json, asr_engine, asr_model,
@@ -135,6 +140,7 @@ export const persistManifest = (db: Db, manifest: RunManifest): void => {
     JSON.stringify(manifest.settings),
     manifest.createdAt,
   );
+  }).immediate();
 };
 
 export interface ReviewQueueRow {

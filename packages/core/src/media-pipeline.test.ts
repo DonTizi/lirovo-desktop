@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ArtifactStore, AsrStrategy, PipelineEvent, SourceManifest, Stage, Transcript } from "@lirovo/contracts";
+import { LirovoError } from "@lirovo/contracts";
 import { runMediaPipeline, type MediaStages } from "./media-pipeline.js";
 import type { StageLedger } from "./ledger.js";
 
@@ -112,6 +113,46 @@ const run = async (
 };
 
 describe("resume", () => {
+  it("invalidates ASR when language/model identity changes without redoing the independent visual branch", async () => {
+    const ledger = memoryLedger();
+    const ran: Stage[] = [];
+    const invoke = (cacheIdentity: string) => runMediaPipeline(
+      { runId: "run_1", source: "/tmp/talk.mp4", frameCap: 100, signal: new AbortController().signal },
+      { stages: makeStages(ran), asr: { ...makeAsr(ran), cacheIdentity }, store, now: () => 0, sha256: (s) => `sha(${s})`, ledger },
+    );
+    const first = await invoke("en-model-v1");
+    ran.length = 0;
+    const same = await invoke("en-model-v1");
+    expect(ran).toEqual(["ingest"]);
+    expect(same.chainTip).toBe(first.chainTip);
+    ran.length = 0;
+    const changed = await invoke("fr-model-v1");
+    expect(ran.sort()).toEqual(["asr", "ingest"]);
+    expect(changed.chainTip).not.toBe(first.chainTip);
+  });
+
+  it("rechecks cached transcripts and records repaired output rather than reusing suspect evidence", async () => {
+    const ledger = memoryLedger();
+    const ran: Stage[] = [];
+    let result = transcript;
+    const asr: AsrStrategy = { ...makeAsr(ran), cacheIdentity: "quality-v1",
+      transcribe: async () => { ran.push("asr"); return result; },
+      validateTranscript: (value) => { if (value.text === "") throw new Error("empty transcript"); },
+    };
+    const invoke = () => runMediaPipeline(
+      { runId: "run_1", source: "/tmp/talk.mp4", frameCap: 100, signal: new AbortController().signal },
+      { stages: makeStages(ran), asr, store, now: () => 0, sha256: (s) => `sha(${s})`, ledger },
+    );
+    const first = await invoke();
+    for (const [key] of ledger.entries) if (key.startsWith("asr:")) ledger.entries.set(key, { ...transcript, text: "" });
+    result = { ...transcript, text: "corrected transcript" };
+    ran.length = 0;
+    const repaired = await invoke();
+    expect(ran.sort()).toEqual(["asr", "ingest"]);
+    expect(repaired.transcript.text).toBe("corrected transcript");
+    expect(repaired.chainTip).not.toBe(first.chainTip);
+  });
+
   it("runs every stage the first time", async () => {
     const ran: Stage[] = [];
     await run(memoryLedger(), ran);
@@ -205,6 +246,42 @@ describe("resume", () => {
 });
 
 describe("nothing is left running when the pipeline returns", () => {
+  it.each([
+    ["asr-failure", "TRANSCRIBE_FAILED", "run:failed"],
+    ["user-cancel", "CANCELLED", "run:cancelled"],
+    ["frame-budget", "FRAME_BUDGET_EXCEEDED", "run:failed"],
+  ] as const)("preserves the causal failure for %s", async (mode, code, eventType) => {
+    const controller = new AbortController();
+    const events: PipelineEvent[] = [];
+    const failure = new LirovoError("TRANSCRIBE_FAILED", "Transcription needs review: asr-quality-probe.json", { stage: "asr" });
+    const invoke = runMediaPipeline(
+      { runId: "run_1", source: "/tmp/talk.mp4", frameCap: 100, signal: controller.signal },
+      {
+        stages: {
+          ...makeStages([]),
+          sceneDetect: ({ signal }) => mode === "frame-budget"
+            ? Promise.reject(new LirovoError("FRAME_BUDGET_EXCEEDED", "Too many frames"))
+            : new Promise((_, reject) => {
+              signal.addEventListener("abort", () => reject(new LirovoError("CANCELLED", "ffmpeg cancelled")), { once: true });
+            }),
+        },
+        asr: {
+          ...makeAsr([]),
+          transcribe: async () => {
+            await Promise.resolve();
+            if (mode === "user-cancel") controller.abort();
+            throw failure;
+          },
+        },
+        store, now: () => 0, sha256: (value) => value, onEvent: (event) => events.push(event),
+      },
+    );
+    await expect(invoke).rejects.toMatchObject({ code });
+    if (mode === "asr-failure") await expect(invoke).rejects.toBe(failure);
+    expect(events.at(-1)?.type).toBe(eventType);
+    expect(controller.signal.aborted).toBe(mode === "user-cancel");
+  });
+
   it("waits for the visual branch even when transcription fails first", async () => {
     // The bug this pins: `Promise.all` rejected the moment ASR threw and left
     // scene-detect running behind it, so the caller closed the database while

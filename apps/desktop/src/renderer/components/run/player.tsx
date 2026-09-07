@@ -4,6 +4,7 @@ import type { RunArtifacts } from "../../../bridge/contract.js";
 import { formatTime, type Lens } from "./lens";
 import { cn } from "../../lib/cn";
 import { syncAudio } from "./sync-audio";
+import { playbackSource } from "./playback-source";
 
 /**
  * The player, the filmstrip and the timeline, as one control.
@@ -50,6 +51,7 @@ export function Player({
   const [muted, setMuted] = useState(false);
   const [audioError, setAudioError] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const attach = useCallback(
     (el: HTMLVideoElement | null) => {
       video.current = el;
@@ -62,7 +64,7 @@ export function Player({
     setVideoError(false);
     if (video.current === null || audio.current === null) return;
     return syncAudio(video.current, audio.current, () => setAudioError(true));
-  }, [artifacts.videoUrl, artifacts.audioUrl]);
+  }, [artifacts.videoUrl, artifacts.audioUrl, playbackAttempt]);
   const durationS = artifacts.durationS ?? 1;
   const kept = artifacts.frames.filter((f) => f.kept);
 
@@ -95,22 +97,33 @@ export function Player({
           ref={attach}
           controls
           preload="metadata"
-          src={artifacts.videoUrl}
+          src={playbackSource(artifacts.videoUrl, playbackAttempt)}
           onError={() => setVideoError(true)}
+          onLoadedMetadata={() => setVideoError(false)}
           className="max-h-[46vh] w-full bg-black"
         />
       )}
       {videoError && (
-        <p role="alert" className="p-3 text-xs text-warning">
-          This recording could not be played. Your results and source images are
-          still available.
-        </p>
+        <div role="alert" className="flex flex-wrap items-center gap-2 p-3 text-xs text-warning">
+          <p>This recording could not be played. Your results and source images are still available.</p>
+          <button
+            type="button"
+            className="min-h-8 rounded-md px-2 underline hover:bg-raised focus-visible:outline focus-visible:outline-2"
+            onClick={() => {
+              // Chromium retains a failed media resource for the same URL;
+              // a fresh query reloads the bytes without changing the file.
+              setPlaybackAttempt((attempt) => attempt + 1);
+            }}
+          >
+            Retry recording
+          </button>
+        </div>
       )}
       {artifacts.audioUrl !== null && artifacts.videoUrl !== null && (
         <div className="border-hairline flex items-center gap-2 border-t px-2 py-1">
           <audio
             ref={audio}
-            src={artifacts.audioUrl}
+            src={playbackSource(artifacts.audioUrl, playbackAttempt)}
             preload="metadata"
             muted={muted}
             onPlaying={() => setAudioError(false)}
@@ -139,7 +152,9 @@ export function Player({
                 if (track === null || movie === null) return;
                 if (track.error !== null) track.load();
                 track.currentTime = movie.currentTime;
-                void movie.play().catch(() => setVideoError(true));
+                void movie.play().catch(() => {
+                  if (movie.error !== null) setVideoError(true);
+                });
                 void track
                   .play()
                   .then(() => setAudioError(false))

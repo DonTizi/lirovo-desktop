@@ -246,20 +246,14 @@ export function SchemaSelect({
 
               {presetsShown.length > 0 && (
                 <>
-                  <p className="text-ink-subtle px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide">
-                    Start from a preset
-                  </p>
-                  {presetsShown.map((p) => (
-                    <Row
-                      key={p.id}
-                      title={p.label}
-                      about={p.about}
-                      selected={
-                        current.label === p.label && current.version === null
-                      }
-                      onSelect={() => pickPreset(p)}
-                    />
-                  ))}
+                  {[{ category: undefined, label: "Everyday extraction" }, { category: "research", label: "Technical research" }].map((group) => {
+                    const entries = presetsShown.filter((preset) => preset.category === group.category);
+                    if (!entries.length) return null;
+                    return <div key={group.label}>
+                      <p className="text-ink-subtle px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide">{group.label}</p>
+                      {entries.map((p) => <Row key={p.id} title={p.label} about={p.about} selected={current.label === p.label && current.version === null} onSelect={() => pickPreset(p)} />)}
+                    </div>;
+                  })}
                 </>
               )}
 

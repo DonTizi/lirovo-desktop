@@ -4,14 +4,14 @@ import { ShieldCheck } from "lucide-react";
 import { LirovoMark } from "./components/LirovoMark";
 import { type PipelineEvent, type Stage } from "@lirovo/contracts";
 import { SCHEMA_PRESETS, compileSchema, type FieldSpec } from "@lirovo/core";
-import { submittedSchemaKey as categoryKeyFor } from "../bridge/schema-identity";
-import type { RunDetail, RunSummary } from "../bridge/contract.js";
+import type { QueueItem, RunDetail, RunSummary } from "../bridge/contract.js";
+import { ExtractionQueue } from "./components/ExtractionQueue";
 import { NavBar, type TabId } from "./components/NavBar";
 import { Onboarding } from "./components/Onboarding";
 import { applyChoice, type ThemeChoice } from "./lib/theme";
 import { TitleBar } from "./components/TitleBar";
 import { SourceInput } from "./components/SourceInput";
-import { RunProgress, type LiveStage } from "./components/RunProgress";
+import { type LiveStage } from "./components/RunProgress";
 import { eventStage } from "./components/progress-model";
 import { isWorking } from "./components/progress-model";
 import { pollSerial } from "./lib/poll";
@@ -19,6 +19,7 @@ import { pendingRun } from "./lib/run-session";
 import { RunView } from "./components/run/run-view";
 import { SchemaPicker } from "./components/SchemaPicker";
 import { Library } from "./components/library";
+import { KnowledgePage } from "./components/KnowledgePage";
 import { SchemasPage } from "./components/SchemasPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { UpdateToast } from "./components/UpdateToast";
@@ -67,6 +68,7 @@ const useStages = (): {
 export const App = (): JSX.Element => {
   const [tab, setTab] = useState<TabId>("overview");
   const [query, setQuery] = useState("");
+  const [sourcePosition,setSourcePosition]=useState<{runId:string;t:number}|null>(null);
   const [source, setSource] = useState("");
   const [fields, setFields] = useState<FieldSpec[]>([
     ...(SCHEMA_PRESETS[0]?.fields ?? []),
@@ -78,8 +80,10 @@ export const App = (): JSX.Element => {
   // Set only while the fields are exactly a stored revision, so a run can point
   // at the contract it was actually asked with.
   const [revisionId, setRevisionId] = useState<string | null>(null);
-  const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const queueRef = useRef<QueueItem[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarToggle = useRef<HTMLButtonElement>(null);
   const previousCollapsed = useRef(sidebarCollapsed);
@@ -105,14 +109,8 @@ export const App = (): JSX.Element => {
   const [bridgeError, setBridgeError] = useState<string | null>(null);
   const { byRun, reset, apply } = useStages();
   // The run this window is executing, so its tab can show it live.
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const sessionIds = useRef(new Set<string>());
   const pendingReads = useRef(new Set<string>());
-  const executingRun = useRef<string | null>(null);
-  const submittedSource = useRef("");
-  const submittedAt = useRef(0);
-  const submittedSchemaName = useRef<string | null>(null);
-  const submittedCategory = useRef<string>("unknown");
 
   const refreshRun = useCallback(async (runId: string) => {
     if (pendingReads.current.has(runId)) return;
@@ -123,7 +121,12 @@ export const App = (): JSX.Element => {
       if (got.ok && got.value !== null) {
         const loaded = got.value;
         setOpen((current) => new Map(current).set(runId, loaded));
-      } else if (!got.ok)
+      } else if (got.ok) {
+        const queued = queueRef.current.find((item) => item.runId === runId);
+        if (queued) setOpen((current) => new Map(current).set(runId, {
+          ...pendingRun(runId, queued.source), status: queued.status, errorMessage: queued.error,
+        }));
+      } else
         setRunsError(`${got.error.code}: ${got.error.message}`);
     } catch (cause) {
       setRunsError(`Could not refresh extraction: ${String(cause)}`);
@@ -151,9 +154,22 @@ export const App = (): JSX.Element => {
   }, [running]);
 
   const loadRuns = useCallback(async () => {
-    const answer = await window.lirovo.listRuns();
+    const [answer, queueAnswer] = await Promise.all([window.lirovo.listRuns(), window.lirovo.listQueue()]);
+    if (queueAnswer.ok) {
+      queueRef.current = queueAnswer.value;
+      setQueue(queueAnswer.value);
+      setRunning(queueAnswer.value.some((item) => item.status === "running" || item.status === "queued"));
+    } else setError(queueAnswer.error.message);
     if (answer.ok) {
-      setRuns(answer.value);
+      const queued = queueAnswer.ok ? queueAnswer.value : queueRef.current;
+      setRuns([
+        ...queued.filter((item) => !answer.value.some((run) => run.runId === item.runId)).map((item): RunSummary => ({
+          runId: item.runId, title: item.source, status: item.status, createdAt: item.createdAt / 1000,
+          valueCount: 0, groundedCount: 0, durationS: null, sourceType: null, frameCount: null,
+          schemaName: item.schemaName, ...(item.schemaKey ? { schemaKey: item.schemaKey } : {}),
+        })),
+        ...answer.value,
+      ]);
       setRunsError(null);
       return;
     }
@@ -173,15 +189,7 @@ export const App = (): JSX.Element => {
         // that. `run:start` is the first thing the engine sends.
         if (event.type === "run:start") {
           reset(event.runId);
-          setActiveRunId(event.runId);
-          executingRun.current = event.runId;
-          setOpen((current) =>
-            new Map(current).set(
-              event.runId,
-              pendingRun(event.runId, submittedSource.current),
-            ),
-          );
-          openRun(event.runId);
+          // The submit/resume action chooses navigation, not a background worker.
           void loadRuns();
         }
         if (
@@ -249,61 +257,43 @@ export const App = (): JSX.Element => {
     });
   };
 
-  const start = async (): Promise<void> => {
-    if (running || source.trim() === "") return;
+  const start = async (options: { language: string; allowRemoteAsr: boolean }): Promise<void> => {
+    if (submitting || source.trim() === "") return;
     setError(null);
-    setActiveRunId(null);
-    setRunning(true);
-    submittedSource.current = source.trim();
-    submittedAt.current = Date.now() / 1000;
-    submittedSchemaName.current =
-      fields.length === 0 ? "Transcript only" : schemaLabel;
-    executingRun.current = null;
-    setTab("overview");
-
+    setSubmitting(true);
     const schemaJson =
       fields.length === 0 ? null : JSON.stringify(compileSchema(fields));
-    const answer = await categoryKeyFor(schemaJson, selectedSchemaId)
-      .then((key) => {
-        submittedCategory.current = key;
-        return window.lirovo.extract({
+    const answer = await window.lirovo.extract({
           source: source.trim(),
-          // No fields means transcribe and detect scenes, and fill nothing in.
           schemaJson,
-          backendId: null,
+          backendId: system?.defaultBackendId ?? null,
           schemaRevisionId: revisionId,
-          schemaName: submittedSchemaName.current,
-        });
-      })
+          schemaName: fields.length === 0 ? "Transcript only" : schemaLabel,
+          language: options.language,
+          allowRemoteAsr: options.allowRemoteAsr,
+        })
       .catch((cause) => ({
         ok: false as const,
         error: { code: "EXTRACTION_INTERRUPTED", message: String(cause) },
       }));
-    setRunning(false);
-    void loadRuns();
+    setSubmitting(false);
+    await loadRuns();
 
     if (!answer.ok) {
       setError(`${answer.error.code}: ${answer.error.message}`);
-      const id = executingRun.current;
-      if (id !== null && sessionIds.current.has(id)) {
-        setOpen((current) => {
-          const previous = current.get(id);
-          return previous
-            ? new Map(current).set(id, {
-                ...previous,
-                status:
-                  answer.error.code === "CANCELLED" ? "cancelled" : "failed",
-                errorCode: answer.error.code,
-                errorMessage: answer.error.message,
-              })
-            : current;
-        });
-        void refreshRun(id);
-      }
       return;
     }
-    // Completion refreshes the session without taking the user away from another page.
-    await refreshRun((answer.value as { runId: string }).runId);
+    setSource("");
+    openRun((answer.value as { runId: string }).runId);
+  };
+
+  const queueAction = async (runId: string, action: "resume" | "cancel"): Promise<void> => {
+    try {
+      const answer = action === "resume" ? await window.lirovo.resumeRun(runId) : await window.lirovo.cancelQueuedRun(runId);
+      if (!answer.ok) setError(answer.error.message);
+      await loadRuns();
+      await refreshRun(runId);
+    } catch (cause) { setError(String(cause)); }
   };
 
   // Anything unfinished keeps refreshing. Without this a run only updates when
@@ -320,7 +310,11 @@ export const App = (): JSX.Element => {
     });
   }, [watching, loadRuns, refreshRun]);
 
-  const detail = openTabs.get(tab) ?? null;
+  const storedDetail = openTabs.get(tab) ?? null;
+  const queuedDetail = queue.find((item) => item.runId === tab);
+  const detail = storedDetail === null ? null : queuedDetail && queuedDetail.status !== "succeeded"
+    ? { ...storedDetail, status: queuedDetail.status === "interrupted" ? "stopped" : queuedDetail.status, errorMessage: queuedDetail.error ?? storedDetail.errorMessage }
+    : storedDetail;
   const values = useMemo(() => {
     if (detail === null) return [];
     const needle = query.trim().toLowerCase();
@@ -350,6 +344,8 @@ export const App = (): JSX.Element => {
         ? "New extraction"
         : tab === "library"
           ? "Library"
+          : tab === "knowledge"
+            ? "Knowledge"
           : tab === "schemas"
             ? "Schemas"
             : "Settings";
@@ -359,28 +355,7 @@ export const App = (): JSX.Element => {
       <div className="text-ink flex h-full overflow-hidden">
         {!sidebarCollapsed && (
           <NavBar
-            runs={
-              activeRunId !== null &&
-              !runs.some((r) => r.runId === activeRunId) &&
-              openTabs.has(activeRunId)
-                ? [
-                    {
-                      runId: activeRunId,
-                      title: openTabs.get(activeRunId)!.title,
-                      status: openTabs.get(activeRunId)!.status,
-                      createdAt: submittedAt.current,
-                      valueCount: 0,
-                      groundedCount: 0,
-                      durationS: null,
-                      sourceType: null,
-                      schemaName: submittedSchemaName.current,
-                      schemaKey: submittedCategory.current,
-                      frameCount: null,
-                    },
-                    ...runs,
-                  ]
-                : runs
-            }
+            runs={runs}
             openRunIds={new Set(openTabs.keys())}
             active={tab}
             onSelect={setTab}
@@ -419,6 +394,10 @@ export const App = (): JSX.Element => {
           />
           <UpdateToast />
           <main className="min-h-0 flex-1 overflow-auto">
+            {error!==null&&tab!=="overview"&&<div role="alert" className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-lg border border-danger-text/30 p-3 text-sm text-danger-text"><p>{error}</p><button onClick={()=>setError(null)} aria-label="Dismiss error">Dismiss</button></div>}
+            {!firstRun && <ExtractionQueue items={queue} onOpen={openRun}
+              onResume={(id) => void queueAction(id, "resume")}
+              onCancel={(id) => void queueAction(id, "cancel")} />}
             {firstRun && system !== null && (
               <div className="mx-auto max-w-5xl px-8 py-10">
                 <Onboarding
@@ -435,23 +414,12 @@ export const App = (): JSX.Element => {
             )}
             {!firstRun && tab === "overview" && (
               <div className="workspace-overview">
-                {running && activeRunId === null ? (
-                  <div className="workspace-progress">
-                    <RunProgress
-                      status="running"
-                      live={byRun.get(activeRunId ?? "") ?? new Map()}
-                      attempts={[]}
-                      errorMessage={error}
-                    />
-                  </div>
-                ) : (
                   <div className="workspace-welcome">
                     <LirovoMark className="text-ink-secondary mb-7 size-11 opacity-75" />
                     <h1 className="text-ink text-[28px] font-normal leading-tight tracking-[-0.02em]">
                       What would you like to extract?
                     </h1>
                   </div>
-                )}
                 <div className="workspace-compose">
                   <p className="text-ink-tertiary mb-6 flex items-center gap-2 px-4 text-sm">
                     <ShieldCheck className="size-3.5" aria-hidden="true" />
@@ -474,7 +442,7 @@ export const App = (): JSX.Element => {
                       </button>
                     </div>
                   )}
-                  <fieldset disabled={running} className="min-w-0">
+                  <fieldset disabled={submitting} className="min-w-0">
                     <SchemaPicker
                       label={schemaLabel}
                       version={schemaVersion}
@@ -483,7 +451,6 @@ export const App = (): JSX.Element => {
                         setFields([...choice.fields]);
                         setSchemaLabel(choice.label);
                         setRevisionId(choice.revisionId);
-                        setSelectedSchemaId(choice.schemaId ?? null);
                         setSchemaVersion(null);
                         if (choice.revisionId !== null) {
                           void window.lirovo.listSchemas().then((answer) => {
@@ -498,7 +465,6 @@ export const App = (): JSX.Element => {
                       onEdit={(next) => {
                         setFields(next);
                         setRevisionId(null);
-                        setSelectedSchemaId(null);
                         setSchemaVersion(null);
                         setSchemaLabel((current) =>
                           current.endsWith(" (edited)")
@@ -512,8 +478,8 @@ export const App = (): JSX.Element => {
                   <SourceInput
                     value={source}
                     onChange={setSource}
-                    onSubmit={() => void start()}
-                    busy={running}
+                    onSubmit={(options) => void start(options)}
+                    busy={submitting}
                     onBrowse={() => {
                       void window.lirovo.pickFile().then((picked) => {
                         if (picked.ok && picked.value !== null)
@@ -541,6 +507,7 @@ export const App = (): JSX.Element => {
                 }
               >
                 {tab === "schemas" && <SchemasPage />}
+                {tab === "knowledge" && <KnowledgePage runs={runs} onOpen={(runId,t)=>{setSourcePosition({runId,t:t??0});openRun(runId);}}/>}
                 {tab === "settings" && (
                   <SettingsPage
                     report={system}
@@ -552,6 +519,7 @@ export const App = (): JSX.Element => {
                 {tab === "library" && (
                   <Library
                     runs={runs}
+                    onChanged={() => void loadRuns()}
                     loading={
                       runs.length === 0 && system === null && runsError === null
                     }
@@ -560,12 +528,22 @@ export const App = (): JSX.Element => {
                   />
                 )}
                 {detail !== null && (
+                  <>
+                  {(!queuedDetail || queuedDetail.status === "cancelled") && ["failed", "cancelled", "stopped"].includes(detail.status) && (
+                    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line p-4 text-sm text-ink-secondary">
+                      <p className="flex-1">This extraction stopped. Resume reuses valid completed stages and the recorded schema.</p>
+                      <button type="button" className="rounded-lg bg-fill px-3 py-2 text-ink" onClick={() => void queueAction(detail.runId, "resume")}>Resume extraction</button>
+                    </div>
+                  )}
                   <RunView
                     key={detail.runId}
                     detail={detail}
                     values={values}
                     live={byRun.get(detail.runId) ?? new Map()}
+                    initialTime={sourcePosition?.runId===detail.runId?sourcePosition.t:0}
+                    onReviewSaved={() => { void refreshRun(detail.runId); void loadRuns(); }}
                   />
+                  </>
                 )}
                 {detail === null && sessionIds.current.has(tab) && (
                   <p role="status" className="text-ink-secondary py-12">

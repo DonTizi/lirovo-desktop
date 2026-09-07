@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { subtitleLanguages, explainYtDlpError, summarizeYtDlpFailure } from "./captions.js";
+import { subtitleLanguages, selectSubtitleFile, explainYtDlpError, summarizeYtDlpFailure } from "./captions.js";
 
 describe("subtitleLanguages", () => {
   it("never uses a glob, because en.* matches the auto-translated en-de track", () => {
@@ -13,8 +13,16 @@ describe("subtitleLanguages", () => {
     expect(parts.indexOf("fr-orig")).toBeLessThan(parts.indexOf("fr"));
   });
 
-  it("falls back to English after the requested language", () => {
-    expect(subtitleLanguages("fr").split(",")).toEqual(["fr-orig", "fr", "en-orig", "en"]);
+  it("does not substitute English for an explicitly requested language", () => {
+    expect(subtitleLanguages("fr").split(",")).toEqual(["fr-orig", "fr"]);
+    expect(selectSubtitleFile(["subs.en.vtt", "subs.fr.vtt", "subs.fr-orig.vtt"], "fr")).toBe("subs.fr-orig.vtt");
+    expect(selectSubtitleFile(["subs.en.vtt"], "fr")).toBeUndefined();
+  });
+
+  it("auto uses only a platform-designated original, not an arbitrary translated track", () => {
+    expect(subtitleLanguages("auto")).toBe(".*-orig");
+    expect(selectSubtitleFile(["subs.en.vtt", "subs.fr-orig.vtt"], "auto")).toBe("subs.fr-orig.vtt");
+    expect(selectSubtitleFile(["subs.en-fr.vtt", "subs.en.vtt"], "auto")).toBeUndefined();
   });
 });
 

@@ -4,6 +4,7 @@ import { groupRuns, runGroupKey } from "../lib/run-groups";
 import { AlertTriangle, FileVideo, Link2 } from "lucide-react";
 import type { RunSummary } from "../../bridge/contract.js";
 import { Hero } from "./hero";
+import { LibrarySafety } from "./LibrarySafety";
 import { ColumnPicker, StationTable, useColumns } from "./station-table";
 import type { TableColumn } from "./station-table";
 import { cn } from "../lib/cn";
@@ -188,15 +189,29 @@ export function Library({
   loading,
   error,
   onOpen,
+  onChanged,
 }: {
   runs: readonly RunSummary[];
   loading: boolean;
   /** Set when the list could not be read at all — never the same as empty. */
   error?: string | null;
   onOpen: (runId: string) => void;
+  onChanged?: () => void;
 }): JSX.Element {
   const { columns, hidden, onToggle, onShowAll } = useColumns(COLUMNS);
   const [schemaFilter, setSchemaFilter] = useState<string | null>(null);
+  const [archiveError,setArchiveError] = useState<string|null>(null);
+  const [archiving,setArchiving] = useState<string|null>(null);
+  const [safetyRevision,setSafetyRevision] = useState(0);
+  const archive = async(runId:string) => {
+    setArchiving(runId);setArchiveError(null);
+    try {
+      const response = await window.lirovo.archiveRun(runId,true);
+      if(!response.ok) throw new Error(response.error.message);
+      setSafetyRevision(value=>value+1);onChanged?.();
+    } catch(error) { setArchiveError(error instanceof Error ? error.message : String(error)); }
+    finally { setArchiving(null); }
+  };
   const groups = groupRuns(runs);
   const currentFilter = groups.some((group) => group.key === schemaFilter)
     ? schemaFilter
@@ -245,6 +260,7 @@ export function Library({
       </div>
 
       <StalledBanner runs={stalled} onOpen={onOpen} className="mt-10" />
+      {archiveError && <p role="alert" className="mt-4 text-sm text-danger-text">{archiveError}</p>}
 
       <section className="border-hairline bg-base mt-10 overflow-hidden rounded-xl border">
         <div className="border-hairline flex items-center justify-between border-b px-5 py-3">
@@ -275,15 +291,20 @@ export function Library({
               : "Nothing extracted yet."
           }
           actions={(run) => (
+            <div className="flex items-center gap-2">
             <button
               onClick={() => onOpen(run.runId)}
               className="liq-solid liq-solid-brand rounded-md px-2.5 py-1 text-xs font-medium"
             >
               Review
             </button>
+            <button type="button" aria-label={`Archive ${run.title ?? run.runId}`} disabled={archiving!==null || ["running","queued","claimed"].includes(run.status)} onClick={event=>{event.stopPropagation();void archive(run.runId);}} className="rounded-md px-2 py-1 text-xs text-ink-subtle hover:bg-fill disabled:opacity-40">Archive</button>
+            </div>
           )}
         />
       </section>
+      {stalled.length>0&&<details className="mt-5 rounded-xl border border-line p-4"><summary className="cursor-pointer text-sm text-ink-secondary">Archive stopped extractions</summary><div className="mt-3 space-y-2">{stalled.map(run=><div key={run.runId} className="flex items-center justify-between gap-3 text-sm"><span>{run.title??run.runId}</span><button disabled={archiving!==null} className="rounded-lg bg-fill px-3 py-2 text-xs disabled:opacity-40" onClick={()=>void archive(run.runId)}>Archive</button></div>)}</div></details>}
+      <div className="mt-8"><LibrarySafety key={safetyRevision} {...(onChanged ? {onChanged} : {})}/></div>
     </div>
   );
 }

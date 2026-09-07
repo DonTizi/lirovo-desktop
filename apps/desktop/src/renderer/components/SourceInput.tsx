@@ -54,11 +54,13 @@ export function SourceInput({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (options: {language: string; allowRemoteAsr: boolean}) => void;
   busy: boolean;
   onBrowse: () => void;
 }): JSX.Element {
   const [drag, setDrag] = useState(false);
+  const [language, setLanguage] = useState("auto");
+  const [allowRemoteAsr, setAllowRemoteAsr] = useState(false);
   const [found, setFound] = useState<SourceInspection | null>(null);
   const [resolving, setResolving] = useState(false);
   const [inspectionError, setInspectionError] = useState<string | null>(null);
@@ -118,7 +120,7 @@ export function SourceInput({
         data-drag={drag ? "true" : undefined}
         onSubmit={(event) => {
           event.preventDefault();
-          if (canSubmit) onSubmit();
+          if (canSubmit) onSubmit({language, allowRemoteAsr});
         }}
         onDragOver={(event) => {
           event.preventDefault();
@@ -209,6 +211,21 @@ export function SourceInput({
             )}
           </button>
         </div>
+        <details className="mt-3 border-t border-hairline pt-3 text-xs text-ink-secondary">
+          <summary className="cursor-pointer">Transcription · {language === "auto" ? "Detect language" : language.toUpperCase()} · {allowRemoteAsr ? "Remote fallback allowed" : "On-device"}</summary>
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2">Spoken language
+              <select aria-label="Spoken language" value={language} disabled={busy} onChange={e => setLanguage(e.target.value)} className="rounded-md border border-hairline bg-surface px-2 py-1">
+                <option value="auto">Auto-detect (multilingual model)</option>
+                <option value="en">English</option><option value="fr">French</option>
+                <option value="es">Spanish</option><option value="de">German</option>
+                <option value="ar">Arabic</option><option value="pt">Portuguese</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={allowRemoteAsr} disabled={busy} onChange={e => setAllowRemoteAsr(e.target.checked)} />Allow configured remote transcription if local transcription fails</label>
+          </div>
+          <p className="mt-2 leading-relaxed text-ink-subtle">Auto-detection needs a multilingual speech model. Remote transcription sends audio to the configured service and may incur charges. Your extraction model is selected separately.</p>
+        </details>
       </form>
       <div
         id="source-feedback"

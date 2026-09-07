@@ -23,6 +23,21 @@ type SaveSchemaRequest = z.infer<typeof saveSchemaRequestSchema>;
 
 /** A request from the main process. `id` is what the answer is matched on. */
 export type EngineRequest =
+  | {id:string;type:"backupLibrary";destination:string}
+  | {id:string;type:"restoreLibrary";backupDirectory:string;destination:string}
+  | {id:string;type:"archiveRun";runId:string;archived:boolean}
+  | {id:string;type:"archivedRuns"}
+  | {id:string;type:"askKnowledge";input:import("../bridge/contract.js").AskKnowledgeRequest}
+  | {id:string;type:"cancelKnowledge";requestId:string}
+  | {id:string;type:"exportRun";runId:string;options:import("../bridge/contract.js").ExportOptions}
+  | {id:string;type:"exportRunFolder";runId:string;destination:string;protectedRoots:string[]}
+  | {id: string; type: "searchKnowledge"; input: import("../bridge/contract.js").KnowledgeQuery}
+  | {id: string; type: "compareKnowledge"; runIds: string[]; approvedOnly?: boolean | undefined}
+  | { id: string; type: "listQueue" }
+  | { id: string; type: "resumeRun"; runId: string }
+  | { id: string; type: "cancelQueuedRun"; runId: string }
+  | { id: string; type: "reviewValue"; input: import("../bridge/contract.js").ReviewMutation }
+  | { id: string; type: "reviewHistory"; runId: string; observationId: string }
   | { id: string; type: "extract"; request: ExtractRequest }
   | { id: string; type: "cancel" }
   | { id: string; type: "doctor" }

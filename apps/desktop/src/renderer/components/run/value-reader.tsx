@@ -5,6 +5,7 @@ import { cn } from "../../lib/cn";
 import { Cue } from "./cue";
 import { formatTime, type Lens } from "./lens";
 import { displayValue, groupValues } from "./value-groups";
+import { ValueReview, type OnReviewSaved } from "./value-review";
 
 function SourceList({ row, lens }: { row: ValueRow; lens: Lens }): JSX.Element {
   return (
@@ -52,10 +53,14 @@ export function ValueReader({
   values,
   total,
   lens,
+  runId,
+  onReviewSaved,
 }: {
   values: readonly ValueRow[];
   total: number;
   lens: Lens;
+  runId: string;
+  onReviewSaved: OnReviewSaved;
 }): JSX.Element {
   const [category, setCategory] = useState<string | null>(null);
   const groups = useMemo(() => groupValues(values), [values]);
@@ -118,7 +123,7 @@ export function ValueReader({
           </div>
           <div className="result-group-body">
             {group.rows.map((row) => (
-              <article key={row.observationId} className="result-item">
+              <article key={row.observationId} className={cn("result-item", row.review?.decision === "rejected" && "bg-tint/30")}>
                 <p
                   className={cn(
                     "result-value",
@@ -139,6 +144,7 @@ export function ValueReader({
                     </span>
                   )}
                 </div>
+                <ValueReview runId={runId} row={row} onSaved={onReviewSaved} />
               </article>
             ))}
           </div>

@@ -80,6 +80,9 @@ jobs:
           pnpm turbo run build --filter=lirovo-desktop
           pnpm --filter lirovo-desktop exec electron-builder --mac --arm64 --publish never
 
+      - name: verify native recording playback and recovery
+        run: pnpm --filter lirovo-desktop exec node scripts/verify-playback.mjs
+
       # Downloadable from the run. Unsigned, so it will not launch without the
       # user overriding Gatekeeper — which is the honest state of a PR build.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
