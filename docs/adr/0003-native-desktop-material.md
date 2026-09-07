@@ -22,6 +22,10 @@ Material varies with macOS window activity and accessibility preferences. CSS pr
 
 ## Alternatives and rollback
 
+### Darker tuning — 2026-09-07
+
+User found v0.5.0 too pale, then clarified that navigation translucency must remain unchanged. Only the workspace is darkened: rgb12/65%, opaque canvas #141414. Sidebar restored exactly to rgb24/22%, opaque #353535, divider white/4%; toolbar rgb24/8% unchanged. Light palette, typography and controls unchanged. The initially tested denser sidebar was rejected by the user. Native computed comparison, 97 desktop tests and build/typecheck passed; [validation](../design/darker-background-contract.md). Human aesthetic approval remains separate.
+
 CSS blur alone cannot reveal the desktop behind an opaque native window. A fully transparent frameless window would introduce unnecessary window-behavior changes. Revert only the material options, renderer marker and corresponding CSS to return to the opaque sidebar.
 
 Official API: https://www.electronjs.org/docs/latest/api/base-window
